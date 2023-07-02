@@ -87,11 +87,10 @@ python main.py --source https://www.youtube.com/watch?v=D_DtKgsr9WQ --output wat
 ```
 
 ## Notes on Translation/Transcription
-* Three confidence markers are prefixed to each line (e.g. `[---]`). They represent, in order:
-  * Probability (from Whisper's log_probablity): - `-`, `?` and `!` represent high to low respectively.
+* Three confidence markers are prefixed to each line (e.g. `[---]`). A summary is that  `[---]` is likely to be fairly accurate, but once you see `?` or `!` it's more likely to be inaccurate, or completely wrong. They represent, in order:
+  * Probability (from Whisper's log probablity): - `-`, `?` and `!` represent high to low respectively.
   * No Speech (Noise) probability: `-`, `?` and `!` represent low to high respectively.
-  * Compression: `-`, `?` and `!` represent low to high respectively.
-  If you're uncertain what this means, a summary is that [---] is likely to be fairly accurate, [!!!] is likely to be very innacurate.
+  * Compression: `-`, `?` and `!` represent low to high respectively.  
 * Translation works reasonably well with background music or sound, so long as it isn't too loud compared to the speech.
 * Singing or speaking with unusual speech patterns may produce poor results.
 * Multiple speakers will often be translated well, but the output will not differentiate between them.
