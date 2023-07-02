@@ -1,6 +1,6 @@
 from __future__ import annotations
 from io import TextIOWrapper
-from multiprocessing.connection import PipeConnection
+from multiprocessing.connection import Pipe as PipeConnection
 from multiprocessing.synchronize import Event
 from typing import Any, Dict, List, TypeVar
 import multiprocessing as mp

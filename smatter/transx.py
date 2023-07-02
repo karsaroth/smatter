@@ -1,5 +1,5 @@
 from __future__ import annotations
-from multiprocessing.connection import PipeConnection
+from multiprocessing.connection import Pipe as PipeConnection
 import re, time, string
 from subprocess import Popen
 import numpy as np
