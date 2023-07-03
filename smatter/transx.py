@@ -1,18 +1,16 @@
 from __future__ import annotations
-from multiprocessing.connection import Pipe as PipeConnection
+from multiprocessing.connection import _ConnectionBase
 import re, time, string
 from subprocess import Popen
 import numpy as np
 import numpy.typing as npt
 import multiprocessing as mp
-import threading as th
-from typing import IO, Callable, Generator, Literal, TypedDict, Tuple, List, Dict, Any
+from typing import Callable, Generator, Literal, TypedDict, Tuple, List, Dict, Any
 from multiprocessing.synchronize import Event
 from faster_whisper import WhisperModel
 from faster_whisper.transcribe import Segment
 from datetime import datetime, timedelta
 import loguru
-from loguru import logger
 from smatter.ff_process import url_into_pcm_pipe
 from libs.vad.utils_vad import VADIterator
 import smatter.utils as u
@@ -315,7 +313,7 @@ def vad_samples(
 def transx_from_audio_stream(
     transx_config: TransXConfig,
     whisper_config: WhisperConfig,
-    sync_pipe: PipeConnection | None,
+    sync_pipe: _ConnectionBase | None,
     ):
   """
   Get a stdout stream from ffmpeg based on the provided

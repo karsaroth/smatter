@@ -1,8 +1,7 @@
 from __future__ import annotations
 from io import TextIOWrapper
-from multiprocessing.connection import Pipe as PipeConnection
+from multiprocessing.connection import _ConnectionBase
 from multiprocessing.synchronize import Event
-from typing import Any, Dict, List, TypeVar
 import multiprocessing as mp
 import ffmpeg as ff #type: ignore
 import loguru
@@ -106,7 +105,7 @@ def url_into_pcm_pipe(
     base_dir: str,
     url: str, 
     start: str, 
-    sync_pipe: PipeConnection | None):
+    sync_pipe: _ConnectionBase | None):
   """
   Uses yt-dlp and ffmpeg to produce a stream of pcm data
   from a source url.
