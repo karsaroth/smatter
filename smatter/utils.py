@@ -45,11 +45,11 @@ def close_queue(queue: mp.Queue, stop: Event, _logger: loguru.Logger, close_fast
     while not close_fast and not stop.is_set() and not queue.empty():
       _logger.debug(f'Waiting for {queue.qsize()} items to be processed.')
       time.sleep(0.1)
-    logger.info(f'Closing output queue, state is stop: [{stop.is_set()}], close fast: [{close_fast}], queue size: [{queue.qsize()}]')
+    _logger.info(f'Closing output queue, state is stop: [{stop.is_set()}], close fast: [{close_fast}], queue size: [{queue.qsize()}]')
     queue.close()
     queue.join_thread()
   except Exception as e:
-    logger.exception(e)
+    _logger.exception(e)
 
 def hms_match(s: str):
   """
@@ -114,6 +114,11 @@ def pipe_to_mp_queue(
   return th.Thread(name=name, target=feed, daemon=True)
 
 def ff_log_messages(stop: Event, _logger: loguru.Logger, pipe_in: TextIO):
+  """
+  Goal here is to ensure it's easy to see
+  where logs are coming from, hence two
+  identical functions for logging.
+  """
   def ffmpeg_log():
     try:
       for line in pipe_in:
@@ -126,6 +131,11 @@ def ff_log_messages(stop: Event, _logger: loguru.Logger, pipe_in: TextIO):
   return th.Thread(name='ffmpeg_logging_thread', target=ffmpeg_log, daemon=True)
 
 def ytdl_log_messages(stop: Event, _logger: loguru.Logger, pipe_in: TextIO):
+  """
+  Goal here is to ensure it's easy to see
+  where logs are coming from, hence two
+  identical functions for logging.
+  """
   def ytdlp_log():
     try:
       for line in pipe_in:

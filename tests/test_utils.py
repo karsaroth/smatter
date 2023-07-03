@@ -103,3 +103,33 @@ def test_pipe_to_pipe(value):
   t.start()
   t.join()
   assert pipe_out.getvalue() == value
+
+def test_pipe_to_mp_queue():
+  pipe_in = BytesIO(b'dummy')
+  q = mp.Queue()
+  e = mp.Event()
+  t = utils.pipe_to_mp_queue(e, logger, 'dummy', 1, pipe_in, q)
+  t.start()
+  assert q.get(True, 1) == b'd'
+  assert q.get(True, 1) == b'u'
+  assert q.get(True, 1) == b'm'
+  assert q.get(True, 1) == b'm'
+  assert q.get(True, 1) == b'y'
+  assert q.get(True, 1) == None
+  t.join(1)
+
+def test_pipe_split():
+  pipe_in = BytesIO(b'dummy')
+  pipe_out = BytesIO()
+  q = mp.Queue()
+  e = mp.Event()
+  t = utils.pipe_split(e, logger, 'dummy', 1, pipe_in, pipe_out, q)
+  t.start()
+  assert q.get(True, 1) == b'd'
+  assert q.get(True, 1) == b'u'
+  assert q.get(True, 1) == b'm'
+  assert q.get(True, 1) == b'm'
+  assert q.get(True, 1) == b'y'
+  assert q.get(True, 1) == None
+  assert pipe_out.getvalue() == b'dummy'
+  t.join(1)
