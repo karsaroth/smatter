@@ -1,7 +1,6 @@
 from __future__ import annotations
 import multiprocessing as mp, threading as th, time, loguru, re
 from multiprocessing.synchronize import Event
-from multiprocessing.connection import PipeConnection
 from typing import IO, TextIO
 from loguru import logger
 from tqdm import tqdm

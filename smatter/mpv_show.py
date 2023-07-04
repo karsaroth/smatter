@@ -5,7 +5,6 @@ import time
 import queue
 import multiprocessing as mp
 from typing import Callable, Concatenate, Literal, ParamSpec, Tuple
-from multiprocessing.connection import PipeConnection
 from threading import Lock
 from smatter.utils import get_logger
 
