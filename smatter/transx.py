@@ -440,9 +440,6 @@ def run_transx(
   }
   count = 0
   blanks_queue = transx_output_queue if _format == 'mpv' else None
-  if _format == 'vtt':
-    # VTT header
-    transx_output_queue.put(f'WEBVTT\n\n')
   for start, voice in vad_samples(_logger, chunk_gen, 1024, 320000, start_int, blanks_queue):
     if stop.is_set():
       break
@@ -460,5 +457,5 @@ def run_transx(
       if _format == 'mpv':
         transx_output_queue.put((t['start'], t['end'], transx_to_string(t)))
       else:
-        transx_output_queue.put(txdata_to_srt(t, count, _format == 'vtt'))
+        transx_output_queue.put((t['start'], t['end'], txdata_to_srt(t, count, _format == 'vtt')))
     _logger.info(f'TransX is now at {count} translations')

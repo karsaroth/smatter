@@ -99,7 +99,6 @@ def pipe_into_mp_queue(
 
   return ff_process, feed_thread, pcm_feed_thread, log_thread
 
-
 def url_into_pcm_pipe(
     stop: Event,
     _logger: loguru.Logger,
@@ -153,14 +152,81 @@ def url_into_pcm_pipe(
   feed_thread.start()
   return yt_dlp_process, ff_process, feed_thread
 
-def probe(_logger: loguru.Logger, url: str):
+def mp_queue_into_hls_stream(
+    stop: Event,
+    _logger: loguru.Logger,
+    base_dir: pathlib.Path,
+    debug: bool,
+    passthrough_queue: mp.Queue,
+    length: int,
+    bandwidth: int,
+    resolution: str,
+
+  ):
+  """
+  Uses ffmpeg to produce a set of
+  hls stream files which can be
+  hosted while being generated. A
+  'fake' main playlist is created
+  linking to subtitle files generated
+  separately.
+  """
+  _logger.info('Starting mp_queue_into_hls_stream')
+  ff_in_args = {
+    'nostats': None,
+    'hide_banner':  None,
+  }
+  if debug:
+    p_stderr = True
+  else:
+    p_stderr = False
+    ff_in_args['loglevel'] = 'error' # type: ignore
+  with open(base_dir / "playlist.m3u8", "w", encoding="utf-8") as f:
+    f.write(f"""#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subtitle",NAME="smatter",DEFAULT=YES,LANGUAGE="ENG",URI="stream_sub_vtt.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={resolution},SUBTITLES="subtitle"
+stream.m3u8
+""")
+    f.flush()
+    
+  ff_in = ff.input('pipe:', **ff_in_args)
+  ff_out_hls = ff.output(
+    ff_in,
+    (base_dir / 'stream.m3u8').absolute().as_posix(),
+    hls_time=length,
+    hls_list_size=0,
+    hls_allow_cache=1,
+    hls_segment_filename=(base_dir / 'stream_%06d.ts').absolute().as_posix(),
+    hls_segment_type='mpegts',
+    hls_flags='temp_file',
+    hls_playlist_type='event'
+  )
+  ff_process = ff.run_async(ff_out_hls, pipe_stdin=True, pipe_stdout=False, pipe_stderr=p_stderr)
+  if not ff_process.stdin:
+    raise Exception('Could not start hls ffmpeg process.')
+  feed_thread, _ = u.mp_queue_to_pipe(stop, _logger, 'passthrough_to_hls_out', ff_process.stdin, passthrough_queue)
+  feed_thread.start()
+  log_thread = None
+  if debug:
+    if not ff_process.stderr:
+      _logger.warning('Could not start logging for ffmpeg process, stderr was not exposed.')
+    else:
+      log_thread = u.ff_log_messages(stop, _logger, TextIOWrapper(ff_process.stderr))
+      log_thread.start()
+
+  return ff_process, feed_thread, log_thread
+
+def probe(_logger: loguru.Logger, url: str, quality: str):
   """
   Uses yt-dlp to probe the source url for information
   """
   _logger.info('Starting yt-dlp process.')
+  format = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if quality.isnumeric() else quality
   args = [
       "yt-dlp", url,
-      "-j"
+      "-j",
+      "-f", format
   ]
   yt_dlp_process = subprocess.Popen(
       args,
