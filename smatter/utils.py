@@ -1,8 +1,7 @@
 from __future__ import annotations
-import multiprocessing as mp, threading as th, time, loguru, re
+import multiprocessing as mp, threading as th, time, loguru, re, io
 from multiprocessing.synchronize import Event
-from multiprocessing.connection import PipeConnection
-from typing import IO, TextIO
+from typing import IO, Literal, TextIO, Tuple
 from loguru import logger
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
@@ -112,6 +111,132 @@ def pipe_to_mp_queue(
     return
   
   return th.Thread(name=name, target=feed, daemon=True)
+
+def mp_queue_to_pipe(
+    stop: Event,
+    _logger: loguru.Logger,
+    name: str,
+    pipe_out: IO[bytes] | None,
+    queue_in: mp.Queue,
+    new_pipe: bool = False
+  ) -> Tuple[th.Thread, IO[bytes]]:
+  """
+  Threads a function that feeds from an 
+  mp queue into a pipe
+  """
+  if new_pipe or pipe_out is None:
+    pipe_out = io.BytesIO()
+    buffer = BufferedReader(pipe_out) #type: ignore
+  else:
+    buffer = pipe_out
+  def feed():
+    try:
+      while not stop.is_set() and (buffer:= queue_in.get()):
+        pipe_out.write(buffer)
+    except BrokenPipeError:
+      _logger.error('Broken pipe for {n}, thread closing.', n=name)
+    except Exception as e:
+      _logger.exception(e)
+    return
+    
+  return th.Thread(name=name, target=feed, daemon=True), buffer
+
+class QueueIO(io.RawIOBase):
+  def __init__(self, mode: Literal['r', 'w', '+'] = 'r', q: mp.Queue = mp.Queue(), name='queue'):
+    self.q = q
+    self.mode = mode
+    self.name = name
+    self.open = True
+    self.end = False
+    self.read_buffer = bytearray()
+    self.position = 0
+
+  @property
+  def closed(self):
+    return not self.open
+  
+  def close(self):
+    if self.open and (self.mode == 'w' or self.mode == '+'):
+      self.q.put(None)
+      self.open = False
+    else:
+      self.read_buffer.clear()
+  
+  def flush(self):
+    pass
+
+  def isatty(self):
+    return False
+  
+  def readable(self) -> bool:
+    return self.mode == 'r' or self.mode == '+'
+  
+  def writable(self) -> bool:
+    return self.mode == 'w' or self.mode == '+'
+
+  def __dequeue(self):
+    val = self.q.get() if not self.end else None
+    if val:
+      self.read_buffer.extend(val)
+    else:
+      self.end = True
+    return val is not None
+
+  def read(self, size=- 1, /):
+    if self.mode == 'w':
+      raise OSError('read() called on write only object')
+    old_pos = self.position
+    if size < 0:
+      while self.__dequeue():
+        pass
+      self.position = len(self.read_buffer)
+    else:
+      while len(self.read_buffer) - self.position < size:
+        more = self.__dequeue()
+        if not more:
+          break
+      self.position = old_pos + size
+    return b'' + self.read_buffer[old_pos:self.position]
+  
+  def readall(self):
+    return self.read()
+  
+  def readinto(self, buffer):
+    data = self.read(len(buffer))
+    buffer[:len(data)] = data
+    return len(data)
+
+  def write(self, b:bytes):
+    self.q.put(b)
+
+  def tell(self):
+    return self.position
+
+  def seek(self, offset, whence=io.SEEK_SET):
+    new_pos = 0
+    if whence == io.SEEK_SET:
+      new_pos = offset
+    elif whence == io.SEEK_CUR:
+      new_pos = self.position + offset
+    elif whence == io.SEEK_END:
+      while self.__dequeue():
+        new_pos = len(self.read_buffer)
+    else:
+      raise ValueError("Invalid whence value")
+    while new_pos > len(self.read_buffer):
+      more = self.__dequeue()
+      if not more:
+        break
+    self.position = new_pos
+    return self.position
+
+  def truncate(self, size=None):
+    if size is None:
+      size = self.position
+    self.read_buffer = self.read_buffer[:size]
+    self.position = min(self.position, size)
+    return len(self.read_buffer)
+  
 
 def ff_log_messages(stop: Event, _logger: loguru.Logger, pipe_in: TextIO):
   """

@@ -133,3 +133,19 @@ def test_pipe_split():
   assert q.get(True, 1) == None
   assert pipe_out.getvalue() == b'dummy'
   t.join(1)
+
+def test_mp_queue_to_pipe():
+  q = mp.Queue()
+  e = mp.Event()
+  t, pipe = utils.mp_queue_to_pipe(e, logger, 'dummy', None, q, True)
+  assert pipe is not None
+  t.start()
+  q.put(b'd')
+  q.put(b'u')
+  q.put(b'm')
+  q.put(b'm')
+  q.put(b'y')
+  q.put(None)
+  t.join(1)
+  assert pipe.getvalue() == b'dummy' #type: ignore
+

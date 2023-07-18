@@ -14,6 +14,7 @@ import multiprocessing as mp
 import smatter.utils as u
 import smatter.transx as tx
 import smatter.ff_process as ff
+import smatter.webrtc as wrtc
 from smatter.mpv_show import show_mpv_transx_window
 
 def main():
@@ -21,7 +22,7 @@ def main():
   parser.add_argument("--source", help="URL of stream/video", type=str, required=True)
   parser.add_argument("--quality", help="Max vertical video size (e.g 480 for 480p)", type=str, default="best")
   parser.add_argument("--start", help="Start point of a vod in HH:mm:ss", type=hms_check, default="0")
-  parser.add_argument("--output", help="What output format is desired (file or video window)", type=str, choices=['srt', 'vtt', 'watch'], required=True)
+  parser.add_argument("--output", help="What output format is desired (file or video window)", type=str, choices=['srt', 'vtt', 'watch', 'stream'], required=True)
   parser.add_argument("--output-dir", help="Directory to store output files", default="./output", type=str, required=False)
   parser.add_argument("--output-file", help="Filename for any output file", default="output.srt", type=str, required=False)
   parser.add_argument("--model-size", help="Whisper model selection", type=str, default="base", required=False,
@@ -62,7 +63,7 @@ def main():
   transx_config: tx.TransXConfig = {
     '_logger': _logger,
     'base_path': './tmp',
-    'format': 'mpv' if args.output == 'watch' else args.output,
+    'format': 'mpv' if args.output == 'watch' else 'vtt' if args.output == 'stream' else args.output,
     'output_queue': transx_output_queue,
     'requested_start': args.start,
     'stop': stopper,
@@ -126,7 +127,6 @@ def main():
       log_or_print('Close MPV window to end the program')
       ufun = update_all_bars([subs, pcm, passthrough])
       show_mpv_transx_window(stopper, _logger, transx_output_queue, passthrough_queue, thumb_url, name, ufun)
-
     except Exception as e:
       _logger.exception(e)
     finally:
@@ -168,6 +168,63 @@ def main():
       if transx_process and transx_process.is_alive():
         transx_process.terminate()
       _logger.info('All done')
+  if args.output == 'stream':
+    #
+    # Stream Process
+    #
+    rtc_app = None
+    try:
+      probed = ff.probe(_logger, args.source)
+      thumb_url = probed['thumbnail']
+      name = probed['title']
+      ytdl_process, _ytdl_log_thread = ff.url_into_pipe(
+        stopper, 
+        _logger if args.log_level == 'debug' else None, 
+        './tmp', 
+        args.source, 
+        args.start, 
+        args.quality
+      )
+      ff_process, _feed_thread, _pcm_feed_thread, _ff_log_thread = ff.pipe_into_mp_queue(
+        stopper, 
+        _logger, 
+        args.log_level == 'debug', 
+        ytdl_process, 
+        pcm_queue, 
+        passthrough_queue
+      )
+      tx_piped_args: Tuple[tx.TransXConfig, tx.WhisperConfig, mp.Queue] = (transx_config, whisper_config, pcm_queue)
+      transx_process = mp.Process(target=tx.transx_from_queue, args=tx_piped_args)
+      transx_process.start()
+      log_or_print('Waiting for media to appear on passthrough queue')
+      while passthrough_queue.qsize() == 0:
+        time.sleep(0.5)
+      rtc_app = wrtc.web_rtc_server(
+        stopper,
+        _logger,
+        passthrough_queue,
+        Path('./www'),
+        'localhost',
+        9999
+      )
+      while True:
+        time.sleep(1)
+    except Exception as e:
+      _logger.exception(e)
+    finally:
+      stopper.set()
+      _logger.info('Cleaning up')
+      if rtc_app:
+        _rtc_shutdown_result = rtc_app.shutdown()
+      time.sleep(0.5)
+      if transx_process and transx_process.is_alive():
+        transx_process.terminate()
+      if ytdl_process and not ytdl_process.returncode:
+        ytdl_process.terminate()
+      if ff_process and not ff_process.returncode:
+        ff_process.terminate()
+
+      _logger.info('All done')
   else:
     log_or_print('Not currently implemented')
 
@@ -175,7 +232,7 @@ class Args(argparse.Namespace):
   source: str
   quality: str
   start: str
-  output: Literal['srt', 'vtt', 'watch']
+  output: Literal['srt', 'vtt', 'watch', 'stream']
   output_dir: str
   output_file: str
   model_size: str
