@@ -1,9 +1,12 @@
 from __future__ import annotations
-from io import TextIOWrapper
+from io import BytesIO, TextIOWrapper
 from multiprocessing.connection import PipeConnection
 from multiprocessing.synchronize import Event
-from typing import Any, Dict, List, TypeVar
+from typing import IO, Any, Dict, List, TypeVar
+from namedpipe import NPopen #type: ignore
 import multiprocessing as mp
+import threading as th
+import queue
 import ffmpeg as ff #type: ignore
 import loguru
 import subprocess
@@ -11,6 +14,36 @@ import smatter.utils as u
 import json
 import time
 import pathlib
+
+class NPopenDelayedWriter(IO):
+
+  def __init__(self, pipe: NPopen):
+    self.qf = lambda q, f: q.put(f())
+    self.queue = queue.Queue()
+    self.thread = th.Thread(target=self.qf, args=(self.queue, pipe.wait))
+    self.thread.start()
+    self.writes: List[bytes] = []
+    self.stream: BytesIO | None = None
+
+  def write(self, b: bytes):
+    if self.stream:
+      self.stream.write(b)
+    elif self.thread.is_alive():
+      self.writes.append(b)
+    else:
+      self.stream = self.queue.get()
+      for b in self.writes:
+        self.stream.write(b)
+      self.writes.clear()
+      self.stream.write(b)
+
+  def flush(self):
+    if self.stream:
+      self.stream.flush()
+
+  def close(self):
+    if self.stream:
+      self.stream.close()
 
 def url_into_pipe(
     stop: Event,
@@ -158,6 +191,7 @@ def mp_queue_into_hls_stream(
     base_dir: pathlib.Path,
     debug: bool,
     passthrough_queue: mp.Queue,
+    subtitle_queue: mp.Queue,
     length: int,
     bandwidth: int,
     resolution: str,
@@ -181,18 +215,22 @@ def mp_queue_into_hls_stream(
   else:
     p_stderr = False
     ff_in_args['loglevel'] = 'error' # type: ignore
-  with open(base_dir / "playlist.m3u8", "w", encoding="utf-8") as f:
-    f.write(f"""#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subtitle",NAME="smatter",DEFAULT=YES,LANGUAGE="ENG",URI="stream_sub_vtt.m3u8"
-#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={resolution},SUBTITLES="subtitle"
-stream.m3u8
-""")
-    f.flush()
-    
+#   with open(base_dir / "playlist.m3u8", "w", encoding="utf-8") as f:
+#     f.write(f"""#EXTM3U
+# #EXT-X-VERSION:3
+# #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subtitle",NAME="smatter",DEFAULT=YES,LANGUAGE="ENG",URI="stream_sub_vtt.m3u8"
+# #EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={resolution},SUBTITLES="subtitle"
+# stream.m3u8
+# """)
+#     f.flush()
+  
+  out_sub_named_pipe = NPopen('wb')
+  out_sub_io = NPopenDelayedWriter(out_sub_named_pipe)
   ff_in = ff.input('pipe:', **ff_in_args)
+  ff_s_in = ff.input(f'async:{out_sub_named_pipe.path}', vn=None, an=None, format='webvtt')
+  ff_filter = ff.overlay(ff_in, ff_s_in, eof_action='pass')
   ff_out_hls = ff.output(
-    ff_in,
+    ff_filter,
     (base_dir / 'stream.m3u8').absolute().as_posix(),
     hls_time=length,
     hls_list_size=0,
@@ -205,8 +243,10 @@ stream.m3u8
   ff_process = ff.run_async(ff_out_hls, pipe_stdin=True, pipe_stdout=False, pipe_stderr=p_stderr)
   if not ff_process.stdin:
     raise Exception('Could not start hls ffmpeg process.')
-  feed_thread, _ = u.mp_queue_to_pipe(stop, _logger, 'passthrough_to_hls_out', ff_process.stdin, passthrough_queue)
-  feed_thread.start()
+  feed_thread_pass, _ = u.mp_queue_to_pipe(stop, _logger, 'passthrough_to_hls_out', ff_process.stdin, passthrough_queue)
+  feed_thread_pass.start()
+  feed_thread_sub, _ = u.mp_queue_to_pipe(stop, _logger, 'subtitles_to_hls_out', out_sub_io, subtitle_queue)
+  feed_thread_sub.start()
   log_thread = None
   if debug:
     if not ff_process.stderr:
@@ -215,7 +255,7 @@ stream.m3u8
       log_thread = u.ff_log_messages(stop, _logger, TextIOWrapper(ff_process.stderr))
       log_thread.start()
 
-  return ff_process, feed_thread, log_thread
+  return ff_process, feed_thread_pass, feed_thread_sub, log_thread
 
 def probe(_logger: loguru.Logger, url: str, quality: str):
   """

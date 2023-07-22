@@ -457,5 +457,5 @@ def run_transx(
       if _format == 'mpv':
         transx_output_queue.put((t['start'], t['end'], transx_to_string(t)))
       else:
-        transx_output_queue.put((t['start'], t['end'], txdata_to_srt(t, count, _format == 'vtt')))
+        transx_output_queue.put(txdata_to_srt(t, count, _format == 'vtt').encode())
     _logger.info(f'TransX is now at {count} translations')

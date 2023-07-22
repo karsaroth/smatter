@@ -63,7 +63,7 @@ def main():
   transx_config: tx.TransXConfig = {
     '_logger': _logger,
     'base_path': './tmp',
-    'format': 'mpv' if args.output == 'watch' else args.output,
+    'format': 'mpv' if args.output == 'watch' else 'vtt' if args.output == 'stream' else args.output,
     'output_queue': transx_output_queue,
     'requested_start': args.start,
     'stop': stopper,
@@ -194,26 +194,23 @@ def main():
         pcm_queue, 
         passthrough_queue
       )
+      transx_output_queue.put('WEBVTT\n\n'.encode())
       tx_piped_args: Tuple[tx.TransXConfig, tx.WhisperConfig, mp.Queue] = (transx_config, whisper_config, pcm_queue)
       transx_process = mp.Process(target=tx.transx_from_queue, args=tx_piped_args)
       transx_process.start()
-      hls_process, _hls_feed_thread, _hls_log_thread = ff.mp_queue_into_hls_stream(
+      hls_process, _hls_feed_thread, _hls_sub_feed_thread, _hls_log_thread = ff.mp_queue_into_hls_stream(
         stopper,
         _logger,
         stream_output_dir,
         args.log_level == 'debug',
         passthrough_queue,
+        transx_output_queue,
         6,
         bandwidth,
         resoultion
       )
-      mo.save_vtt_chunks(
-        stopper,
-        _logger,
-        transx_output_queue,
-        6,
-        stream_output_dir
-      )
+      while True:
+        time.sleep(0.5)
     except Exception as e:
       _logger.exception(e)
     finally:

@@ -1,8 +1,9 @@
 from __future__ import annotations
+import io
 import multiprocessing as mp, threading as th, time, loguru, re
 from multiprocessing.synchronize import Event
 from multiprocessing.connection import PipeConnection
-from typing import IO, TextIO
+from typing import IO, TextIO, Tuple
 from loguru import logger
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
@@ -112,6 +113,32 @@ def pipe_to_mp_queue(
     return
   
   return th.Thread(name=name, target=feed, daemon=True)
+
+def mp_queue_to_pipe(
+    stop: Event,
+    _logger: loguru.Logger,
+    name: str,
+    pipe_out: IO[bytes] | None,
+    queue_in: mp.Queue,
+    new_pipe: bool = False
+  ) -> Tuple[th.Thread, IO[bytes]]:
+  """
+  Threads a function that feeds from an 
+  mp queue into a pipe
+  """
+  if new_pipe or pipe_out is None:
+    pipe_out = io.BytesIO()
+  def feed():
+    try:
+      while not stop.is_set() and (buffer:= queue_in.get()):
+        pipe_out.write(buffer)
+    except BrokenPipeError:
+      _logger.error('Broken pipe for {n}, thread closing.', n=name)
+    except Exception as e:
+      _logger.exception(e)
+    return
+    
+  return th.Thread(name=name, target=feed, daemon=True), pipe_out
 
 def ff_log_messages(stop: Event, _logger: loguru.Logger, pipe_in: TextIO):
   """

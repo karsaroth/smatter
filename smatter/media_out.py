@@ -23,7 +23,7 @@ def save_srt(
       f.write(f'WEBVTT\n\n')
       f.flush()
     while not stop.is_set() and (srt:= srt_in.get()):
-      _, _, srt_record = srt
+      srt_record = srt
       f.write(srt_record)
       f.flush()
       count += 1
