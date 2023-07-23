@@ -23,7 +23,7 @@ class TransXConfig(TypedDict):
   _logger: loguru.Logger
   base_path: str
   stream_url: str
-  format: Literal['srt', 'vtt', 'mpv']
+  format: Literal['srt', 'vtt', 'tuple']
   requested_start: str
 
 class WhisperConfig(TypedDict):
@@ -439,7 +439,7 @@ def run_transx(
     'condition_on_previous_text': False
   }
   count = 0
-  blanks_queue = transx_output_queue if _format == 'mpv' else None
+  blanks_queue = transx_output_queue if _format == 'tuple' else None
   if _format == 'vtt':
     # VTT header
     transx_output_queue.put(f'WEBVTT\n\n')
@@ -457,7 +457,7 @@ def run_transx(
     _logger.debug(f'Cleaned down to {len(final_segments)} transx results.')
     for t in final_segments:
       count += 1
-      if _format == 'mpv':
+      if _format == 'tuple':
         transx_output_queue.put((t['start'], t['end'], transx_to_string(t)))
       else:
         transx_output_queue.put(txdata_to_srt(t, count, _format == 'vtt'))

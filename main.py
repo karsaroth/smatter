@@ -63,7 +63,7 @@ def main():
   transx_config: tx.TransXConfig = {
     '_logger': _logger,
     'base_path': './tmp',
-    'format': 'mpv' if args.output == 'watch' else 'vtt' if args.output == 'stream' else args.output,
+    'format': 'tuple' if args.output == 'watch' or args.output == 'stream' else args.output,
     'output_queue': transx_output_queue,
     'requested_start': args.start,
     'stop': stopper,
@@ -196,17 +196,19 @@ def main():
       tx_piped_args: Tuple[tx.TransXConfig, tx.WhisperConfig, mp.Queue] = (transx_config, whisper_config, pcm_queue)
       transx_process = mp.Process(target=tx.transx_from_queue, args=tx_piped_args)
       transx_process.start()
-      log_or_print('Waiting for media to appear on passthrough queue')
-      while passthrough_queue.qsize() == 0:
+      log_or_print('Waiting for media to appear on translation queue')
+      while transx_output_queue.qsize() == 0:
         time.sleep(0.5)
       rtc_app = wrtc.web_rtc_server(
         stopper,
         _logger,
         passthrough_queue,
+        transx_output_queue,
         Path('./www'),
         'localhost',
         9999
       )
+      log_or_print('Server is runing on port 9999')
       while True:
         time.sleep(1)
     except Exception as e:

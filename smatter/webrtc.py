@@ -1,16 +1,19 @@
 from __future__ import annotations
+import io
 import os
 from pathlib import Path
+from typing import Optional, Set
 import uuid
 import loguru
 import json
-import time
+import av
+import threading
 import multiprocessing as mp
 from .utils import QueueIO
 from multiprocessing.synchronize import Event
 from aiohttp import web
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
-from aiortc.contrib.media import MediaPlayer
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel, RTCConfiguration
+from aiortc.contrib.media import MediaPlayer, PlayerStreamTrack, REAL_TIME_FORMATS  
 
 class SmatterRTCServer():
   def __init__(self, stop: Event, _logger: loguru.Logger, passthrough_queue: mp.Queue, subtitle_queue: mp.Queue, file_root=Path('./')):
@@ -49,17 +52,18 @@ class SmatterRTCServer():
       offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
 
       pc = RTCPeerConnection()
+
       pc_id = "PeerConnection(%s)" % uuid.uuid4()
       self.peer_connections.add(pc)
 
       def log_info(msg, *args):
         self._logger.info(pc_id + " " + msg, *args)
 
-      log_info("Created for %s", request.remote)
+      log_info(f"Created for {request.remote}")
 
       @pc.on("connectionstatechange")
       async def on_connectionstatechange():
-          log_info("Connection state is %s", pc.connectionState)
+          log_info(f"Connection state is {pc.connectionState}")
           if pc.connectionState == "failed":
               await pc.close()
               self.peer_connections.discard(pc)
@@ -70,9 +74,15 @@ class SmatterRTCServer():
       def send_subs():
         if self.end_signal.is_set():
           return
-        next = 'DUMMY'
+        next = (0, 0, 'DUMMY')
         while not self.stopper.is_set() and data_channel.bufferedAmount <= data_channel.bufferedAmountLowThreshold and (next:= self.subtitle_queue.get()):
-          data_channel.send(next)
+          s, e, t = next
+          msg = {
+            'start': s,
+            'end': e,
+            'text': t if t else ''
+          }
+          data_channel.send(json.dumps(msg))
         if not next:
           self.end_signal.set()
 
@@ -90,7 +100,10 @@ class SmatterRTCServer():
       return web.Response(
           content_type="application/json",
           text=json.dumps(
-              {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+              {
+                "sdp": pc.localDescription.sdp, 
+                "type": pc.localDescription.type
+              }
           ),
       )
     return offer

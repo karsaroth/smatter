@@ -262,7 +262,7 @@ def text_chunk_from_samples():
   mock_process = MockProcess()
   chunk_gen = transx.chunk_from_samples(mp.Event(), logger, mock_process, 2) #type: ignore
   result = np.zeros(0, np.float32)
-  for c in chunk_gen:
+  while c:= chunk_gen.__next__():
     assert isinstance(c, np.ndarray)
     assert c.dtype == np.float32
     assert c.shape == (2,)
