@@ -1,11 +1,20 @@
 // peer connection
 var pc = null;
 
+// text track for subtitles
+var textTrack = document.getElementById('video').addTextTrack('captions', 'Smatter');
+
 function createPeerConnection() {
-  var config = {
+  const config = {
     sdpSemantics: 'unified-plan'
   };
-  pc = new RTCPeerConnection(config);
+  const pc = new RTCPeerConnection(config);
+  const vid = document.getElementById('video');
+  vid.addEventListener('loadedmetadata', function(_evt) {
+    console.log('Showing text track')
+    textTrack.mode = 'showing';
+    vid.textTracks[0].mode = 'showing'; // Firefox?
+  });
   // connect audio / video
   pc.addEventListener('track', function(evt) {
     console.log(`Got track event ${JSON.stringify(evt)}`)
@@ -15,16 +24,20 @@ function createPeerConnection() {
       document.getElementById('audio').srcObject = evt.streams[0];
   });
   pc.addEventListener('datachannel', function(evt) {
-    console.log(`Got datachannel event ${evt}`)
-    textTrack = document.getElementById('video').appendChild(document.createElement('track', {
-      kind: 'subtitles',
-      default: true
-    }));
+    console.log(`Connected data channel ${JSON.stringify(evt)}`)
     evt.channel.addEventListener('message', function(evt) {
-      smatterSub = JSON.parse(evt.data)
-      cue = VTTCue(smatterSub.start, smatterSub.end, smatterSub.text)
-      textTrack.addCue(cue)
+      console.log(`Got message on data channel`);
+      smatterSub = JSON.parse(evt.data);
+      console.log(JSON.stringify(smatterSub));
+      cue = new VTTCue(smatterSub.start, smatterSub.end, smatterSub.text);
+      textTrack.addCue(cue);
     });
+  });
+  const dc = pc.createDataChannel(
+    'smatter_vtt'
+  )
+  dc.addEventListener('open', function(evt) {
+    console.log(`Data channel opened by server ${JSON.stringify(evt)}`)
   });
 
   return pc;

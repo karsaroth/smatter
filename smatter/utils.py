@@ -1,11 +1,10 @@
 from __future__ import annotations
-import multiprocessing as mp, threading as th, time, loguru, re, io
+import multiprocessing as mp, threading as th, time, loguru, re, io, logging, sys
 from multiprocessing.synchronize import Event
 from typing import IO, Literal, TextIO, Tuple
 from loguru import logger
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
-
 
 def fix_elapsed(record: loguru.Record):
    """
@@ -28,6 +27,7 @@ def setup_logger(log_level: str):
     logger.add(sink=lambda m: tqdm.write(m.strip()), enqueue=True, colorize=True, level=log_level, backtrace=True, diagnose=True, format="<g>{extra[elapsed]}</g> | <level>{level: <8}</level> | <c>{process.name}</c>:<c>{thread.name}</c>:<c>{process.id}</c>:<c>{function}</c>:<c>{line}</c> - <level>{message}</level>")
     logger.warning(f'Setting smatter log level to {log_level}')
   __logger = logger
+  logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
 def get_logger() -> loguru.Logger:
   """
@@ -306,3 +306,19 @@ def pipe_split(
     return
   
   return th.Thread(name=name, target=feed, daemon=True)
+
+class InterceptHandler(logging.Handler):
+  def emit(self, record):
+    # Get corresponding Loguru level if it exists.
+    try:
+      level = logger.level(record.levelname).name
+    except ValueError:
+      level = record.levelno
+
+    # Find caller from where originated the logged message.
+    frame, depth = sys._getframe(6), 6
+    while frame and frame.f_code.co_filename == logging.__file__:
+      frame = frame.f_back
+      depth += 1
+
+    logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
