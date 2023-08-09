@@ -1,12 +1,29 @@
 from __future__ import annotations
-import multiprocessing as mp, threading as th, time, loguru, re
+import multiprocessing as mp, threading as th, time, loguru, re, io
 from multiprocessing.synchronize import Event
 from multiprocessing.connection import PipeConnection
-from typing import IO, TextIO
+from typing import IO, TextIO, Tuple
 from loguru import logger
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
+import logging
+import sys
 
+class InterceptHandler(logging.Handler):
+  def emit(self, record):
+    # Get corresponding Loguru level if it exists.
+    try:
+      level = logger.level(record.levelname).name
+    except ValueError:
+      level = record.levelno
+
+    # Find caller from where originated the logged message.
+    frame, depth = sys._getframe(6), 6
+    while frame and frame.f_code.co_filename == logging.__file__:
+      frame = frame.f_back
+      depth += 1
+
+    logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 def fix_elapsed(record: loguru.Record):
    """
@@ -16,6 +33,7 @@ def fix_elapsed(record: loguru.Record):
 
 # Primary logger, kept global for easy access
 __logger: loguru.Logger | None
+logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
 def setup_logger(log_level: str):
   """
@@ -181,3 +199,30 @@ def pipe_split(
     return
   
   return th.Thread(name=name, target=feed, daemon=True)
+
+def mp_queue_to_pipe(
+    stop: Event,
+    _logger: loguru.Logger,
+    name: str,
+    pipe_out: IO[bytes] | None,
+    queue_in: mp.Queue,
+    new_pipe: bool = False
+  ) -> Tuple[th.Thread, IO[bytes]]:
+  """
+  Threads a function that feeds from an 
+  mp queue into a pipe
+  """
+  if new_pipe or pipe_out is None:
+    pipe_out = io.BytesIO()
+  def feed():
+    try:
+      while not stop.is_set() and (buffer:= queue_in.get()):
+        pipe_out.write(buffer)
+    except BrokenPipeError:
+      _logger.error('Broken pipe for {n}, thread closing.', n=name)
+    except Exception as e:
+      _logger.exception(e)
+    return
+    
+  return th.Thread(name=name, target=feed, daemon=True), pipe_out
+

@@ -14,6 +14,7 @@ import smatter.utils as u
 import smatter.transx as tx
 import smatter.ff_process as ff
 import smatter.media_out as mo
+import smatter.stream_server as stream
 from smatter.mpv_show import show_mpv_transx_window
 
 def main():
@@ -35,6 +36,7 @@ def main():
   #Prep external tools:
   basepath = os.path.dirname(os.path.abspath(__file__))
   binspath = os.path.join(basepath, 'libs/bin')
+  wwwpath = Path(os.path.join(basepath, 'www'))
   os.environ['PATH'] = binspath + os.pathsep + os.pathsep + os.environ['PATH']
 
   #Kick off work
@@ -207,13 +209,14 @@ def main():
         bandwidth,
         resoultion
       )
-      mo.save_vtt_chunks(
-        stopper,
-        _logger,
-        transx_output_queue,
-        6,
-        stream_output_dir
-      )
+      # mo.save_vtt_chunks(
+      #   stopper,
+      #   _logger,
+      #   transx_output_queue,
+      #   6,
+      #   stream_output_dir
+      # )
+      stream.run_server(_logger, 'localhost', 9999, wwwpath, stream_output_dir, transx_output_queue)
     except Exception as e:
       _logger.exception(e)
     finally:

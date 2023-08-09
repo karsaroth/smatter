@@ -1,0 +1,29 @@
+<head>
+  <link href="https://vjs.zencdn.net/8.3.0/video-js.css" rel="stylesheet" />
+</head>
+
+<body>
+  <video
+    style="width: 100% !important; height: auto !important;"
+    id="smatter-stream"
+    class="video-js vjs-default-skin vjs-fluid vjs-16-9"
+    controls
+    preload="auto"
+    liveui="true"
+    poster="poster.png"
+    width="auto"
+    fullscreen='{"options": {"navigationUI": "show"}'
+    data-setup='{}'
+  >
+    <source src="stream/stream.m3u8" type="application/x-mpegURL" />
+    <p class="vjs-no-js">
+      To view this video please enable JavaScript, and consider upgrading to a
+      web browser that
+      <a href="https://videojs.com/html5-video-support/" target="_blank"
+        >supports HTML5 video</a
+      >
+    </p>
+  </video>
+
+  <script src="https://vjs.zencdn.net/8.3.0/video.min.js"></script>
+</body>
