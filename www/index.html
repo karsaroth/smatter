@@ -13,9 +13,10 @@
     poster="poster.png"
     width="auto"
     fullscreen='{"options": {"navigationUI": "show"}'
-    data-setup='{}'
+    data-setup='{"plugins": {"reloadSourceOnError": {}}}'
   >
     <source src="stream/stream.m3u8" type="application/x-mpegURL" />
+    <track kind="subtitles" label="Smatter" id="smatter" default />
     <p class="vjs-no-js">
       To view this video please enable JavaScript, and consider upgrading to a
       web browser that
@@ -26,4 +27,5 @@
   </video>
 
   <script src="https://vjs.zencdn.net/8.3.0/video.min.js"></script>
+  <script src="js/smatter.js"></script>
 </body>

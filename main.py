@@ -65,7 +65,7 @@ def main():
   transx_config: tx.TransXConfig = {
     '_logger': _logger,
     'base_path': './tmp',
-    'format': 'mpv' if args.output == 'watch' else args.output,
+    'format': 'plain' if args.output == 'watch' or args.output == 'stream' else args.output,
     'output_queue': transx_output_queue,
     'requested_start': args.start,
     'stop': stopper,
