@@ -1,6 +1,7 @@
 const vid = videojs('smatter-stream');
 const loadedSubs = [];
 var sub_buffer_pause = false;
+var modal;
 
 vid.ready(function() {
   //Set up subtitle monitor
@@ -24,21 +25,28 @@ vid.ready(function() {
       if (sub_buffer_pause) {
         vid.play();
         sub_buffer_pause = false;
+        if (modal !== undefined) {
+          modal.close();
+          modal = undefined;
+        }
       }
     } catch (e) {
       console.log(e);
     }
   },
-  1000)
+  1000);
 
   //Set up video time monitor
   vid.on('progress', function() {
     try {
       const time = vid.currentTime();
-      if (time < loadedSubs[loadedSubs.length - 1]) {
+      if (time >= loadedSubs[loadedSubs.length - 1]) {
+        console.log(`Current Time: ${time} >= Loaded Sub's Latest: ${loadedSubs[loadedSubs.length - 1]}, pausing.`)
         vid.pause();
         sub_buffer_pause = true;
-        var modal = player.createModal('Waiting for subtitles...');
+        if (modal == undefined) {
+          modal = vid.createModal('Waiting for subtitles...');
+        }
       }
     } catch (e) {
       console.log(e);

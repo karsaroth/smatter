@@ -1,14 +1,14 @@
 from __future__ import annotations
 from multiprocessing.connection import PipeConnection
-import re, time, string
+import re, time, string, os
 from subprocess import Popen
 import numpy as np
 import numpy.typing as npt
 import multiprocessing as mp
 import threading as th
-from typing import IO, Callable, Generator, Literal, TypedDict, Tuple, List, Dict, Any
+from typing import IO, Callable, Generator, Literal, Optional, TypedDict, Tuple, List, Dict, Any
 from multiprocessing.synchronize import Event
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel, download_model
 from faster_whisper.transcribe import Segment
 from datetime import datetime, timedelta
 import loguru
@@ -31,6 +31,7 @@ class WhisperConfig(TypedDict):
   force_gpu: bool
   lang: str
   goal: str
+  model_root: str
 
 class TransXData(TypedDict):
   """
@@ -44,6 +45,16 @@ class TransXData(TypedDict):
   noise_probability: float
   compression_ratio: float
   text: str
+
+def check_and_download(model_size: str, base_path: str):
+  """
+  Checks if the model is downloaded and downloads it if not
+  """
+  download_model(
+    model_size,
+    local_files_only=False,
+    cache_dir=base_path,
+  )
 
 def segment_to_txdata(segment: Segment, segment_start_time: float) -> TransXData:
   """
@@ -397,6 +408,9 @@ def transx_from_queue(
       return input_queue.get()
     chunk_gen = chunk_from_samples(stop, _logger, r_fun, 1024)
     run_transx(transx_config, whisper_config, start_int, model, gigo, chunk_gen)
+  except KeyboardInterrupt or SystemExit:
+    _logger.info('Transx process asked to exit, cleaning up.')
+    close_fast = True
   except Exception as e:
     _logger.exception(e)
     close_fast = True
@@ -416,7 +430,8 @@ def transx_prep(
   model = WhisperModel(
     whisper_config['model_size'],
     device= "cuda" if whisper_config['force_gpu'] else "auto",
-    compute_type="default"
+    compute_type="default",
+    download_root=whisper_config['model_root']
   )
   _logger.info('Model loading complete')
   return gigo_phrases, model

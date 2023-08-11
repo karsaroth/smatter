@@ -160,5 +160,6 @@ cython_debug/
 .idea/
 .vscode/
 /tmp/
+/cache/
 /output/
 /libs/bin/**/*

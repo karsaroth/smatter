@@ -14,7 +14,8 @@ import pathlib
 
 def url_into_pipe(
     stop: Event,
-    _logger: loguru.Logger | None,
+    _logger: loguru.Logger,
+    log_level: str,
     base_dir: str,
     url: str,
     start: str,
@@ -29,28 +30,31 @@ def url_into_pipe(
     base_path.mkdir(parents=True, exist_ok=True)
   if not yt_dlp_cache.exists():
     yt_dlp_cache.mkdir(exist_ok=True)
-  format = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if quality.isnumeric() else quality
+
   args = [
       'yt-dlp', url,
       '--cache-dir', "./yt-dlp-cache",
       '-o', '-', 
-      '-f', format
   ]
+  if quality != 'best':
+    format = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if quality.isnumeric() else quality
+    args.extend(['-f', format])
   if start != "0":
     args.extend(["--download-sections", f'*{start}-inf'])
   yt_dlp_process = subprocess.Popen(
       args,
       stdin=subprocess.DEVNULL,
       stdout=subprocess.PIPE,
-      stderr=subprocess.PIPE if _logger else subprocess.DEVNULL,
-      cwd=base_dir
+      stderr=subprocess.PIPE,
+      cwd=base_dir,
+      creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
   )
   log_thread = None
   if _logger:
     if not yt_dlp_process.stderr:
       _logger.warning('Could not start logging for yt-dlp process, stderr was not exposed.')
     else:
-      log_thread = u.ytdl_log_messages(stop, _logger, TextIOWrapper(yt_dlp_process.stderr))
+      log_thread = u.ytdl_log_messages(stop, _logger, log_level == 'DEBUG', TextIOWrapper(yt_dlp_process.stderr))
       log_thread.start()
   return yt_dlp_process, log_thread
 
@@ -132,7 +136,8 @@ def url_into_pcm_pipe(
       stdin=subprocess.DEVNULL,
       stdout=subprocess.PIPE,
       stderr=subprocess.DEVNULL,
-      cwd=base_dir
+      cwd=base_dir,
+      creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
   )
   if not yt_dlp_process.stdout:
     raise Exception('Could not start yt-dlp process for {url}')
@@ -159,15 +164,19 @@ def mp_queue_into_hls_stream(
     debug: bool,
     passthrough_queue: mp.Queue,
     length: int,
-    bandwidth: int,
-    resolution: str,
-
   ):
   """
   Uses ffmpeg to produce a set of
   hls stream files which can be
   hosted while being generated.
   """
+  
+  #Check if base_dir contains any files and if it does, delete them.
+  if len(list(base_dir.glob('*'))) > 0:
+    _logger.info('Deleting files in {dir}', dir=base_dir.absolute().as_posix())
+    for file in base_dir.glob('*'):
+      file.unlink()
+
   _logger.info('Starting mp_queue_into_hls_stream')
   ff_in_args = {
     'nostats': None,
@@ -178,14 +187,6 @@ def mp_queue_into_hls_stream(
   else:
     p_stderr = False
     ff_in_args['loglevel'] = 'error' # type: ignore
-#   with open(base_dir / "playlist.m3u8", "w", encoding="utf-8") as f:
-#     f.write(f"""#EXTM3U
-# #EXT-X-VERSION:3
-# #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subtitle",NAME="smatter",DEFAULT=YES,LANGUAGE="ENG",URI="stream_sub_vtt.m3u8"
-# #EXT-X-STREAM-INF:BANDWIDTH={bandwidth},RESOLUTION={resolution},SUBTITLES="subtitle"
-# stream.m3u8
-# """)
-#     f.flush()
     
   ff_in = ff.input('pipe:', **ff_in_args)
   ff_out_hls = ff.output(

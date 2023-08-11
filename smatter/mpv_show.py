@@ -76,8 +76,7 @@ def show_mpv_transx_window(
     transx_out: mp.Queue,
     passthrough_queue: mp.Queue, 
     thumb_url: str,
-    name: str,
-    status_fun: Callable[[], bool]
+    name: str
     ):
   
   import mpv #type: ignore
@@ -113,8 +112,6 @@ def show_mpv_transx_window(
     player.play(thumb_url)
     _logger.warning('Waiting for transx to show up before playing...')
     while transx_out.empty():
-      if status_fun_ok:
-        status_fun_ok = status_fun()
       if player.core_shutdown:
         raise Exception('Player is shutting down before load completed')
       time.sleep(1)
@@ -177,13 +174,12 @@ def show_mpv_transx_window(
     player._set_property('title', f'{name} (sub offset: {round(offset, 2)})')
     _logger.info('MPV load complete, now playing.')
     
-    while True:
-      if status_fun_ok:
-        status_fun_ok = status_fun()
-      if player.core_shutdown:
-        break
+    while not player.core_shutdown:
       time.sleep(0.2)
+  except KeyboardInterrupt or SystemExit:
+    _logger.warning('Player was interrupted, shutting down...')
   except Exception as e:
     _logger.exception(e)
   finally:
     stop.set()
+    player.terminate()

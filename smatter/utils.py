@@ -2,7 +2,7 @@ from __future__ import annotations
 import multiprocessing as mp, threading as th, time, loguru, re, io
 from multiprocessing.synchronize import Event
 from multiprocessing.connection import PipeConnection
-from typing import IO, TextIO, Tuple
+from typing import IO, List, TextIO, Tuple
 from loguru import logger
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
@@ -10,10 +10,17 @@ import logging
 import sys
 
 class InterceptHandler(logging.Handler):
+  def __init__(self, _logger: loguru.Logger):
+    super().__init__()
+    self.logger = _logger
+
   def emit(self, record):
     # Get corresponding Loguru level if it exists.
     try:
-      level = logger.level(record.levelname).name
+      if record.threadName == 'stream_server' and record.funcName == 'log':
+        level = self.logger.level('DEBUG').name
+      else:
+        level = self.logger.level(record.levelname).name
     except ValueError:
       level = record.levelno
 
@@ -23,7 +30,7 @@ class InterceptHandler(logging.Handler):
       frame = frame.f_back
       depth += 1
 
-    logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+    self.logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 def fix_elapsed(record: loguru.Record):
    """
@@ -33,7 +40,6 @@ def fix_elapsed(record: loguru.Record):
 
 # Primary logger, kept global for easy access
 __logger: loguru.Logger | None
-logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
 def setup_logger(log_level: str):
   """
@@ -47,6 +53,7 @@ def setup_logger(log_level: str):
     logger.add(sink=lambda m: tqdm.write(m.strip()), enqueue=True, colorize=True, level=log_level, backtrace=True, diagnose=True, format="<g>{extra[elapsed]}</g> | <level>{level: <8}</level> | <c>{process.name}</c>:<c>{thread.name}</c>:<c>{process.id}</c>:<c>{function}</c>:<c>{line}</c> - <level>{message}</level>")
     logger.warning(f'Setting smatter log level to {log_level}')
   __logger = logger
+  logging.basicConfig(handlers=[InterceptHandler(__logger)], level=0, force=True)
 
 def get_logger() -> loguru.Logger:
   """
@@ -93,6 +100,8 @@ def pipe_to_pipe(
         pipe_out.write(buffer)
     except BrokenPipeError:
       _logger.error('Broken pipe for {n}, thread closing.', n=name)
+    except KeyboardInterrupt or SystemExit:
+      _logger.info(f'Keyboard interrupt or system exit, closing {name}')
     except Exception as e:
       _logger.exception(e)
     finally:
@@ -121,6 +130,9 @@ def pipe_to_mp_queue(
     except BrokenPipeError:
       _logger.error('Broken pipe for {n}, thread closing.', n=name)
       close_fast = True
+    except KeyboardInterrupt or SystemExit:
+      _logger.info(f'Keyboard interrupt or system exit, closing {name}')
+      close_fast = True
     except Exception as e:
       _logger.exception(e)
       close_fast = True
@@ -143,27 +155,40 @@ def ff_log_messages(stop: Event, _logger: loguru.Logger, pipe_in: TextIO):
         _logger.debug(line.strip())
         if stop.is_set():
           break
+    except KeyboardInterrupt or SystemExit:
+      _logger.info('Keyboard interrupt or system exit, closing ffmpeg_logging_thread')
     except Exception as e:
       _logger.exception(e)
   
   return th.Thread(name='ffmpeg_logging_thread', target=ffmpeg_log, daemon=True)
 
-def ytdl_log_messages(stop: Event, _logger: loguru.Logger, pipe_in: TextIO):
+def ytdl_log_messages(stop: Event, _logger: loguru.Logger, debug: bool, pipe_in: TextIO):
   """
-  Goal here is to ensure it's easy to see
-  where logs are coming from, hence two
-  identical functions for logging.
+  Not only log everything if
+  at debug level, but also
+  cache the last lines and
+  print them once the process
+  is done.
   """
   def ytdlp_log():
+    cache: List[str] = []
     try:
       for line in pipe_in:
-        _logger.debug(line.strip())
+        if debug:
+          _logger.debug(line.strip())
+        if len(cache) > 10:
+          cache.pop(0)
+        cache.append(line.strip())
         if stop.is_set():
           break
+    except KeyboardInterrupt or SystemExit:
+      _logger.info('Keyboard interrupt or system exit, closing ytdlp_logging_thread.')
     except Exception as e:
       _logger.exception(e)
+    finally:
+      _logger.info('Last 10 lines of youtube-dl output:\n{op}', op='\n'.join(cache))
   
-  return th.Thread(name='ytdlp_logging_thread', target=ytdlp_log, daemon=True)  
+  return th.Thread(name='ytdlp_logging_thread', target=ytdlp_log, daemon=True) 
 
 def pipe_split(
     stop: Event, 
@@ -189,6 +214,9 @@ def pipe_split(
     except OSError as e:
       _logger.exception(e)
       _logger.error('MP pipe failure for {n}, thread closing.', n=name)
+      close_fast = True
+    except KeyboardInterrupt or SystemExit:
+      _logger.info(f'Keyboard interrupt or system exit, closing {name}')
       close_fast = True
     except Exception as e:
       _logger.exception(e)
@@ -220,6 +248,8 @@ def mp_queue_to_pipe(
         pipe_out.write(buffer)
     except BrokenPipeError:
       _logger.error('Broken pipe for {n}, thread closing.', n=name)
+    except KeyboardInterrupt or SystemExit:
+      _logger.info(f'Keyboard interrupt or system exit, closing {name}')
     except Exception as e:
       _logger.exception(e)
     return
