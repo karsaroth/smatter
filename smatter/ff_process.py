@@ -108,8 +108,7 @@ def url_into_pcm_pipe(
     _logger: loguru.Logger,
     base_dir: str,
     url: str, 
-    start: str, 
-    sync_pipe: PipeConnection | None):
+    start: str):
   """
   Uses yt-dlp and ffmpeg to produce a stream of pcm data
   from a source url.
@@ -129,8 +128,6 @@ def url_into_pcm_pipe(
   ]
   if start != "0":
     args.extend(["--download-sections", f'*{start}-inf'])
-  if sync_pipe:
-    sync_pipe.send(time.time())
   yt_dlp_process = subprocess.Popen(
       args,
       stdin=subprocess.DEVNULL,
