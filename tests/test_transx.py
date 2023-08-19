@@ -1,13 +1,15 @@
-from loguru import logger
-from smatter import transx
-from faster_whisper.transcribe import Segment
-from libs.vad.utils_vad import VADIterator
-from pytest_mock import MockerFixture
+
 import io
-import numpy as np
-import pytest
 import string
 import multiprocessing as mp
+import numpy as np
+import pytest
+from pytest_mock import MockerFixture
+from loguru import logger
+from faster_whisper.transcribe import Segment
+from smatter import transx
+from libs.vad.utils_vad import VADIterator
+
 
 
 def generate_txdata(text) -> transx.TransXData:
@@ -30,7 +32,7 @@ def generate_txdata(text) -> transx.TransXData:
     ]
 )
 def test_segment_to_txdata(base_start, start, end, text, prob, noise, comp):
-  s = Segment(
+  segment = Segment(
     1,
     16430,
     start,
@@ -43,7 +45,8 @@ def test_segment_to_txdata(base_start, start, end, text, prob, noise, comp):
     noise,
     None,
   )
-  result = transx.segment_to_txdata(s, base_start)
+  
+  result = transx.WhisperTransXModel.segment_to_txdata(segment, base_start)
   assert result == {
     "start": base_start + start,
     "end": base_start + end,
@@ -74,7 +77,7 @@ def test_segment_to_txdata(base_start, start, end, text, prob, noise, comp):
   ],
 )
 def text_fix_repeated_phrases(input, output, fixed):
-  result = transx.fix_repeated_phrases(input)
+  result = transx.WhisperTransXModel.fix_repeated_phrases(input)
   assert result == (output, fixed)
 
 @pytest.mark.parametrize(
@@ -104,8 +107,10 @@ def text_fix_repeated_phrases(input, output, fixed):
   ],
 )
 def test_fix_repeated_sounds(input, output, fixed):
-  result = transx.fix_repeated_sounds(input)
-  assert result == (output, fixed)
+  txd = generate_txdata(input)
+  result = transx.WhisperTransXModel.fix_repeated_sounds(txd)
+  assert result == fixed
+  assert txd["text"] == output
 
 @pytest.mark.parametrize(
   "input, size, first",
@@ -127,14 +132,41 @@ def test_fix_repeated_sounds(input, output, fixed):
   ],
 )
 def test_filter_gigo_results(input, size, first):
-  tx_data = list(map(lambda x: generate_txdata(x), input))
+  tx_data = list(map(generate_txdata, input))
   test_gigo_phrases = list(map(lambda x: x.translate(str.maketrans('', '', string.punctuation)).casefold(), [
     'Bye Bye',
     'Please subscribe to my channel',
     'Thanks for watching',
     'See you in the next video'
   ]))
-  result = transx.filter_gigo_results(tx_data, test_gigo_phrases)
+  config = transx.TransXConfig(
+    stream_url='',
+    base_path="./",
+    format="srt",
+    stop=mp.Event(),
+    output_queue=mp.Queue(),
+    _logger=logger,
+    requested_start='0',
+    model_config=transx.WhisperConfig(
+      force_gpu=False,
+      gigo_phrases=test_gigo_phrases,
+      goal='translate',
+      lang='ja',
+      model='faster_whisper',
+      model_root='./',
+      model_size='large-v2'
+    )
+  )
+  class MockTransXModel(transx.WhisperTransXModel):
+    def __init__(self, config):
+      super().__init__(config['_logger'], config['model_config'])
+
+    def test_filter_gigo_results(self, tx_data):
+      return self._WhisperTransXModel__filter_gigo_results(tx_data) # type: ignore
+  
+  model = MockTransXModel(config) # type: ignore
+
+  result = model.test_filter_gigo_results(tx_data)
   assert len(result) == size
   assert result[0]["text"] == first
 
@@ -153,9 +185,7 @@ def test_seconds_to_timestamp(input, output, vtt):
   result = transx.seconds_to_timestamp(input, vtt)
   assert result == output
 
-def test_transx_to_string(monkeypatch):
-  monkeypatch.setattr(transx, "fix_repeated_phrases", lambda x: (x, True))
-  monkeypatch.setattr(transx, "fix_repeated_sounds", lambda x: (x, True))
+def test_transx_to_string():
   tx: transx.TransXData = {
     "start": 1.0,
     "end": 2.0,
@@ -238,7 +268,7 @@ def test_join_similar():
     "compression_ratio": 2.0,
     "text": 'More sample text'
   }
-  result = transx.join_similar([tx1, tx2, tx3, tx4])
+  result = transx.WhisperTransXModel.join_similar([tx1, tx2, tx3, tx4])
   assert len(result) == 2
   assert result[0]["text"] == 'Sample text'
   assert result[0]["start"] == 1.0
@@ -260,7 +290,7 @@ class MockProcess:
 #Testing transx.chunk_from_samples()
 def text_chunk_from_samples():
   mock_process = MockProcess()
-  chunk_gen = transx.chunk_from_samples(mp.Event(), logger, mock_process, 2) #type: ignore
+  chunk_gen = transx.chunk_from_samples(mp.Event(), mock_process, 2) #type: ignore
   result = np.zeros(0, np.float32)
   for c in chunk_gen:
     assert isinstance(c, np.ndarray)

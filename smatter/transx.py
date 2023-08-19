@@ -112,7 +112,7 @@ class WhisperTransXModel(TransXModel):
     self.model: WhisperModel | None = None
 
   @staticmethod
-  def __join_similar(transx: List[TransXData]):
+  def join_similar(transx: List[TransXData]):
     """
     Sometimes Whisper returns the same segment result multiple times, or the same
     audio part translated slightly differently. This removes duplicates
@@ -158,7 +158,7 @@ class WhisperTransXModel(TransXModel):
     )
 
   @staticmethod
-  def __fix_repeated_phrases(transx: TransXData) -> bool:
+  def fix_repeated_phrases(transx: TransXData) -> bool:
     """
     Whisper likes to return segments with 
     phrases repeated many times sometimes
@@ -183,7 +183,7 @@ class WhisperTransXModel(TransXModel):
       return True
 
   @staticmethod
-  def __fix_repeated_sounds(transx: TransXData) -> bool:
+  def fix_repeated_sounds(transx: TransXData) -> bool:
     """
     Whisper likes to turn a chuckle into
     a maniacal laugh with hundreds of characters.
@@ -220,7 +220,7 @@ class WhisperTransXModel(TransXModel):
     return True
 
   @staticmethod
-  def __segment_to_txdata(segment: Segment, segment_start_time: float) -> TransXData:
+  def segment_to_txdata(segment: Segment, segment_start_time: float) -> TransXData:
     """
     Prep TX data for analysis
     """
@@ -257,22 +257,22 @@ class WhisperTransXModel(TransXModel):
     segments, _ = self.model.transcribe(audio=audio, **self.transx_kwargs)
     self.logger.debug(f'Finished speech transx for {start_offset}')
     transx_list = list(
-      map(lambda s: WhisperTransXModel.__segment_to_txdata(s, start_offset), segments)
+      map(lambda s: WhisperTransXModel.segment_to_txdata(s, start_offset), segments)
     )
     self.logger.debug(f'Whisper found {len(transx_list)} transx results')
 
     # Filter for unnecessary or noisy transx
     final_list = self.__filter_gigo_results(
-      WhisperTransXModel.__join_similar(
+      WhisperTransXModel.join_similar(
         transx_list
       )
     )
 
     # Improve readability of some transx
     for transx in final_list:
-      was_fixed = WhisperTransXModel.__fix_repeated_phrases(transx)
+      was_fixed = WhisperTransXModel.fix_repeated_phrases(transx)
       if not was_fixed:
-        WhisperTransXModel.__fix_repeated_sounds(transx)
+        WhisperTransXModel.fix_repeated_sounds(transx)
 
     self.logger.debug(f'Cleaned and filtered down to {len(final_list)} transx results.')
     return final_list
@@ -444,7 +444,7 @@ def config_to_model(config: TransXConfig) -> TransXModel:
   """
   Convert the config into a model
   """
-  if isinstance(config['model_config'], WhisperConfig):
+  if config['model_config']['model'] == 'faster_whisper':
     return WhisperTransXModel(config['_logger'], config['model_config']) # type: ignore
   raise RuntimeError('Unsupported model')
 
