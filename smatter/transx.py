@@ -11,7 +11,8 @@ import abc
 import multiprocessing as mp
 from subprocess import Popen
 from multiprocessing.synchronize import Event
-from typing import Callable, Generator, Literal, TypedDict, Tuple, List, Dict, Any
+from multiprocessing.connection import PipeConnection
+from typing import Callable, Generator, Literal, TypedDict, Tuple, List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import numpy as np
 import numpy.typing as npt
@@ -71,7 +72,7 @@ class TransXModel(abc.ABC):
   """
 
   @abc.abstractmethod
-  def prepare_dependencies(self) -> str:
+  def prepare_dependencies(self, local=False) -> str:
     """
     Prepare any dependencies, return
     a path to the model or other 
@@ -87,7 +88,13 @@ class TransXModel(abc.ABC):
     """
 
   @abc.abstractmethod
-  def transx(self, audio: np.ndarray, start_offset: float, **kwargs) -> List[TransXData]:
+  def transx(
+    self,
+    audio: np.ndarray,
+    start_offset: float,
+    language: Optional[str] = None,
+    goal: Optional[Literal['transcribe', 'translate']] = None,
+    **kwargs) -> List[TransXData]:
     """
     Generate transx of the provided
     audio. Timestamps must be offset
@@ -104,11 +111,6 @@ class WhisperTransXModel(TransXModel):
   def __init__(self, _logger: loguru.Logger, config: WhisperConfig):
     self.logger = _logger
     self.config = config
-    self.transx_kwargs = {
-      'language': self.config['lang'], 
-      'task': self.config['goal'], 
-      'condition_on_previous_text': False
-    }
     self.model: WhisperModel | None = None
 
   @staticmethod
@@ -233,10 +235,10 @@ class WhisperTransXModel(TransXModel):
       'text': segment.text.strip()
     }
 
-  def prepare_dependencies(self):
+  def prepare_dependencies(self, local=False):
     return download_model(
       self.config['model_size'],
-      local_files_only=False,
+      local_files_only=local,
       cache_dir=self.config['model_root'],
     )
 
@@ -248,13 +250,22 @@ class WhisperTransXModel(TransXModel):
       download_root = self.config['model_root']
     )
 
-  def transx(self, audio: np.ndarray, start_offset: float, **kwargs) -> List[TransXData]:
+  def transx(
+      self,
+      audio: np.ndarray,
+      start_offset: float,
+      language: Optional[str] = None,
+      goal: Optional[Literal['transcribe', 'translate']] = None,
+      **kwargs) -> List[TransXData]:
     if self.model is None:
       raise RuntimeError('Model not loaded')
-    if 'language' in kwargs:
-      self.transx_kwargs['language'] = kwargs['language']
+    transx_kwargs = {
+      'language': language if language else self.config['lang'], 
+      'task': goal if goal else self.config['goal'], 
+      'condition_on_previous_text': kwargs['context'] if 'context' in kwargs else False
+    }
     self.logger.debug(f'Starting speech transx for {start_offset}')
-    segments, _ = self.model.transcribe(audio=audio, **self.transx_kwargs)
+    segments, _ = self.model.transcribe(audio=audio, **transx_kwargs)
     self.logger.debug(f'Finished speech transx for {start_offset}')
     transx_list = list(
       map(lambda s: WhisperTransXModel.segment_to_txdata(s, start_offset), segments)
@@ -276,6 +287,89 @@ class WhisperTransXModel(TransXModel):
 
     self.logger.debug(f'Cleaned and filtered down to {len(final_list)} transx results.')
     return final_list
+
+class InteractiveTransXProcess():
+  """
+  A class to handle the process of
+  translating a stream into subtitles
+  """
+  def __init__(
+      self,
+      _logger: loguru.Logger,
+      model_config: TypedDict,
+      ):
+    self.stopper = mp.Event()
+    self.input_queue = mp.Queue()
+    self.output_queue = mp.Queue()
+    self.logger = _logger
+    self.model_config = model_config
+    self.format: Literal['srt', 'vtt', 'plain'] = 'plain'
+    self.__process: Optional[mp.Process] = None
+
+  def check_model(self, download=False):
+    """
+    Check the TransX model
+    is available and ready
+    """
+    verify_and_prepare_models(self.model_config, download)
+
+  def status(self):
+    """
+    Return the status of the
+    TransX process
+    """
+    if self.__process is None:
+      return 'stopped'
+    if self.__process.is_alive():
+      return 'running'
+    return 'complete'
+
+  def start(self, requested_start: str):
+    """
+    Start the TransX process
+    based on the current
+    configuration
+    """
+    self.stopper.clear()
+    tx_config = TransXConfig(
+      _logger = self.logger,
+      stop = self.stopper,
+      output_queue=self.output_queue,
+      model_config=self.model_config,
+      format=self.format,
+      requested_start=requested_start,
+      base_path='',
+      stream_url='',
+    )
+    tx_piped_args: Tuple[TransXConfig, mp.Queue] = (
+      tx_config, self.input_queue
+    )
+    self.__process = mp.Process(target=transx_from_queue, args=tx_piped_args)
+
+  def stop(self):
+    """
+    Stops the TransX process
+    and cleans up the process
+    """
+    self.stopper.set()
+
+  def cleanup(self):
+    """
+    Clean up processes and
+    state
+    """
+    if self.__process is not None:
+      self.logger.info('Waiting for TransX process to finish')
+      self.__process.join()
+      self.__process = None
+      self.logger.info('TransX process finished')
+    while not self.input_queue.empty():
+      try:
+        # Clean out the output queue
+        self.input_queue.get_nowait()
+      except queue.Empty:
+        break
+    self.logger.info('Transx cleanup complete')
 
 def seconds_to_timestamp(seconds, vtt = False):
   """
@@ -440,20 +534,20 @@ def vad_samples(
       active_voice = {}
     prev_chunk = chunk
 
-def config_to_model(config: TransXConfig) -> TransXModel:
+def config_to_model(config: TypedDict) -> TransXModel:
   """
   Convert the config into a model
   """
-  if config['model_config']['model'] == 'faster_whisper':
-    return WhisperTransXModel(config['_logger'], config['model_config']) # type: ignore
+  if config['model'] == 'faster_whisper':
+    return WhisperTransXModel(config['_logger'], config) # type: ignore
   raise RuntimeError('Unsupported model')
 
-def verify_and_prepare_models(config: TransXConfig):
+def verify_and_prepare_models(config: TypedDict, download=False):
   """
   Check if the model is downloaded and download it if not
   """
   model = config_to_model(config)
-  model.prepare_dependencies()
+  model.prepare_dependencies(download)
 
 def transx_from_audio_stream(transx_config: TransXConfig):
   """
