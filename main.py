@@ -80,10 +80,6 @@ def main():
   #
   # Subtitle/Caption Output
   transx_output_queue = mp.Queue()
-  # Unmodified audio/video from ytdlp
-  passthrough_queue = mp.Queue()
-  # Audio from ytdlp in PCM format for whisper
-  pcm_queue = mp.Queue()
 
   #
   # Process and Thread Monitoring
@@ -94,9 +90,6 @@ def main():
 
   # Process placeholders
   transx_process = None
-  ff_process = None
-  ytdl_process = None
-  hls_process = None
 
   # Output file/folder setup
   output_dir = Path(args.output_dir)
@@ -141,7 +134,7 @@ def main():
          exist or needs updating. This might take a long time!''',
       cd=cache_dir.as_posix()
     )
-    tx.verify_and_prepare_models(transx_config)
+    tx.verify_and_prepare_models(_logger, transx_config['model_config'])
     _logger.warning('Transx model check complete.')
 
     if ((args.output == 'srt' or args.output == 'vtt') and \
@@ -158,60 +151,50 @@ def main():
     # Watch Process:
     #
     # Set up watch processes
-    subs = live_bar_update_fun(
-      tqdm(desc='Subtitles Available', total=25, unit='subtitle', ),
-      transx_output_queue.qsize
-    )
-    pcm = reverse_live_bar_update_fun(
-      tqdm(desc='PCM Backlog', total=100, unit='chunk', ),
-      pcm_queue.qsize
-    )
-    passthrough = live_bar_update_fun(
-      tqdm(desc='Video Backlog', total=100, unit='chunk', ),
-      passthrough_queue.qsize
-    )
     try:
       probed = ff.probe(_logger, args.source, args.quality)
       thumb_url = probed['thumbnail']
       name = probed['title']
-      ytdl_process, ytdl_log_thread = ff.url_into_pipe(
-        stopper,
-        _logger,
-        log_level,
-        args.cache_dir,
-        args.source,
-        args.start,
-        args.quality
+      stream_config = ff.StreamInputConfig(
+        url= args.source,
+        start= args.start,
+        quality= args.quality,
+        cache_dir= args.cache_dir,
       )
-      subprocesses.append(ytdl_process)
-      if ytdl_log_thread:
-        threads.append(ytdl_log_thread)
-
-      ff_process, feed_thread, pcm_feed_thread, ff_log_thread = ff.pipe_into_mp_queue(
-        stopper,
-        _logger,
-        args.log_level == 'debug',
-        ytdl_process,
-        pcm_queue,
-        passthrough_queue
-      )
-      subprocesses.append(ff_process)
-      threads.extend([feed_thread, pcm_feed_thread])
-      if ff_log_thread:
-        threads.append(ff_log_thread)
+      stream_input = ff.MultiprocessStreamInput(_logger, stream_config, log_level == 'DEBUG')
+      stream_input.start()
 
       tx_piped_args: Tuple[tx.TransXConfig, tx.WhisperConfig, mp.Queue] = (
-        transx_config, whisper_config, pcm_queue
+        transx_config, whisper_config, stream_input.pcm_queue
       )
       transx_process = mp.Process(target=tx.transx_from_queue, args=tx_piped_args)
       transx_process.start()
       processes.append(transx_process)
+      subs = live_bar_update_fun(
+        tqdm(desc='Subtitles Available', total=25, unit='subtitle', ),
+        transx_output_queue.qsize
+      )
+      pcm = reverse_live_bar_update_fun(
+        tqdm(desc='PCM Backlog', total=100, unit='chunk', ),
+        stream_input.pcm_queue.qsize
+      )
+      passthrough = live_bar_update_fun(
+        tqdm(desc='Video Backlog', total=100, unit='chunk', ),
+        stream_input.passthrough_queue.qsize
+      )
       status_bar_thread = thread_status_bars(stopper, [subs, pcm, passthrough])
       threads.append(status_bar_thread)
       log_or_print('Close MPV window to end the program')
       mpv_thread = th.Thread(
         target=show_mpv_transx_window,
-        args=(stopper, _logger, transx_output_queue, passthrough_queue, thumb_url, name)
+        args=(
+          stopper,
+          _logger,
+          transx_output_queue,
+          stream_input.passthrough_queue,
+          thumb_url,
+          name
+        )
       )
       mpv_thread.start()
       threads.append(mpv_thread)
@@ -242,10 +225,7 @@ def main():
       subs = live_bar_update_fun(
         tqdm(desc='Subtitles Waiting', total=25, unit='subtitle', ), transx_output_queue.qsize
       )
-      pcm = reverse_live_bar_update_fun(
-        tqdm(desc='PCM Waiting', total=100, unit='chunk', ), pcm_queue.qsize
-      )
-      status_bar_thread = thread_status_bars(stopper, [subs, pcm])
+      status_bar_thread = thread_status_bars(stopper, [subs])
     except Exception as ex:
       _logger.exception(ex)
       stopper.set()
@@ -254,74 +234,22 @@ def main():
     # Streaming Thread:
     #
     # Set up HLS streaming process
+    #
+    # Control is handled via http requests
     try:
-      # _logger.info('Checking for stream details')
-      # probed = ff.probe(_logger, args.source, args.quality)
-      ytdl_process, ytdl_log_thread = ff.url_into_pipe(
-        stopper,
-        _logger,
-        log_level,
-        args.cache_dir,
-        args.source,
-        args.start,
-        args.quality
-      )
-      subprocesses.append(ytdl_process)
-      if ytdl_log_thread:
-        threads.append(ytdl_log_thread)
-
-      ff_process, feed_thread, pcm_feed_thread, ff_log_thread = ff.pipe_into_mp_queue(
-        stopper,
-        _logger,
-        args.log_level == 'debug',
-        ytdl_process,
-        pcm_queue,
-        passthrough_queue
-      )
-      subprocesses.append(ff_process)
-      threads.extend([feed_thread, pcm_feed_thread])
-      if ff_log_thread:
-        threads.append(ff_log_thread)
-
-      tx_piped_args: Tuple[tx.TransXConfig, tx.WhisperConfig, mp.Queue] = (
-        transx_config, whisper_config, pcm_queue
-      )
-      transx_process = mp.Process(target=tx.transx_from_queue, args=tx_piped_args)
-      transx_process.start()
-      processes.append(transx_process)
-
-      hls_process, hls_feed_thread, hls_log_thread = ff.mp_queue_into_hls_stream(
-        stopper,
-        _logger,
-        stream_output_dir,
-        args.log_level == 'debug',
-        passthrough_queue,
-        6
-      )
-      subprocesses.append(hls_process)
-      threads.extend([hls_feed_thread])
-      if hls_log_thread:
-        threads.append(hls_log_thread)
-
-      subs = live_bar_update_fun(
-        tqdm(desc='Subtitles Backlog', total=25, unit='subtitle', ), transx_output_queue.qsize
-      )
-      pcm = reverse_live_bar_update_fun(
-        tqdm(desc='PCM Backlog', total=100, unit='chunk', ), pcm_queue.qsize
-      )
-      passthrough = live_bar_update_fun(
-        tqdm(desc='Video Backlog', total=100, unit='chunk', ), passthrough_queue.qsize
-      )
-      status_bar_thread = thread_status_bars(stopper, [subs, pcm, passthrough])
       server_thread = stream.run_server(
-        _logger, args.stream_host, args.stream_port, wwwpath, stream_output_dir, transx_output_queue
+        _logger,
+        args.stream_host,
+        args.stream_port,
+        wwwpath,
+        stream_output_dir,
+        transx_config
       )
-      threads.extend([status_bar_thread, server_thread])
+      threads.extend([server_thread])
 
     except Exception as ex:
       _logger.exception(ex)
       stopper.set()
-
   else:
     log_or_print('Not currently implemented')
 

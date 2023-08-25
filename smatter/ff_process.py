@@ -183,6 +183,9 @@ class MultiprocessStreamOutput(SubprocessManager):
     self.base_dir = base_dir
     self.length = length
     self.passthrough_queue = mp.Queue()
+    # Ensure the base_dir exists
+    if not self.base_dir.exists():
+      self.base_dir.mkdir(parents=True, exist_ok=True)
 
   def __mp_queue_into_hls_stream(self):
     """

@@ -102,7 +102,7 @@ class StreamRequestHandler:
     directory
     """
     async def handler(_request: web.Request):
-      content = open(os.path.join(self.www, file), r_type, encoding='UTF-8').read()
+      content = open(os.path.join(self.www, file), r_type).read()
       return web.Response(content_type=c_type, body=content)
     return handler
 
@@ -127,7 +127,7 @@ class StreamRequestHandler:
           return web.Response(status=web.HTTPNotFound.status_code)
         if not os.path.exists(os.path.join(self.stream, file)):
           return web.Response(status=web.HTTPInternalServerError.status_code)
-        content = open(os.path.join(self.stream, file), r_type, encoding='UTF-8').read()
+        content = open(os.path.join(self.stream, file), r_type).read()
         return web.Response(content_type=c_type, body=content)
       return web.Response(status=web.HTTPNotFound.status_code)
     return handler
@@ -173,8 +173,6 @@ class StreamRequestHandler:
     """
     return all([
       self.status['model_loaded'].is_set(),
-      self.state['transx'].status() != 'running',
-      self.state['stream_input'].is_clean(),
       self.state['stream_url'],
       self.state['language'],
       self.state['goal'],
@@ -224,7 +222,7 @@ class StreamRequestHandler:
                 or self.status['model_loaded'].is_set() \
                 or self.output_queue_complete \
                 or self.state['transx'].status() == 'running':
-              return web.Response(status=web.HTTPConflict.status_code)
+              return web.StreamResponse(status=web.HTTPConflict.status_code)
             self.status['model_loading'].set()
             def check_model():
               try:
@@ -244,7 +242,7 @@ class StreamRequestHandler:
               if u.hms_match(request_data['requested_start']):
                 self.state['requested_start'] = request_data['requested_start']
               else:
-                return web.Response(status=web.HTTPBadRequest.status_code)
+                return web.StreamResponse(status=web.HTTPBadRequest.status_code)
             self.state['stream_url'] = request_data['stream_url'] \
               if 'stream_url' in request_data else None
             self.state['language'] = request_data['language'] \
@@ -255,7 +253,7 @@ class StreamRequestHandler:
               if 'quality' in request_data else None
           case 'start':
             if not self.__ready_for_stream():
-              return web.Response(status=web.HTTPConflict.status_code)
+              return web.StreamResponse(status=web.HTTPConflict.status_code)
             self.state['stream_input'].input_config = ff.StreamInputConfig(
               url=self.state['stream_url'], # type: ignore
               start=self.state['requested_start'] if self.state['requested_start'] else '0',
@@ -274,6 +272,7 @@ class StreamRequestHandler:
             self.__handle_thread(th.Thread(target=self.state['stream_input'].cleanup()))
             self.__handle_thread(th.Thread(target=self.state['transx'].cleanup()))
             self.__handle_thread(th.Thread(target=self.state['stream_output'].cleanup()))
+            self.subtitle_buffer = []
           case _:
             status=web.HTTPBadRequest.status_code
       except json.JSONDecodeError:
@@ -282,7 +281,7 @@ class StreamRequestHandler:
         self.state['logs'].append(str(ex))
         self.logger.exception(ex)
         status=web.HTTPInternalServerError.status_code
-      return web.Response(status=status)
+      return web.StreamResponse(status=status)
 
     return handler
 
@@ -317,6 +316,7 @@ def run_server(
       app.router.add_get("/stream/{file}", srh.get_stream_content())
       app.router.add_get("/smatter/subtitles", srh.get_subtitles())
       app.router.add_post("/smatter/state", srh.post_state_change())
+      app.router.add_get("/smatter/status", srh.get_status())
       runner = web.AppRunner(
         app,
         handle_signals=True,

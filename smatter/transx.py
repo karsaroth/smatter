@@ -311,7 +311,7 @@ class InteractiveTransXProcess():
     Check the TransX model
     is available and ready
     """
-    verify_and_prepare_models(self.model_config, download)
+    verify_and_prepare_models(self.logger, self.model_config, download)
 
   def status(self):
     """
@@ -345,6 +345,7 @@ class InteractiveTransXProcess():
       tx_config, self.input_queue
     )
     self.__process = mp.Process(target=transx_from_queue, args=tx_piped_args)
+    self.__process.start()
 
   def stop(self):
     """
@@ -534,19 +535,19 @@ def vad_samples(
       active_voice = {}
     prev_chunk = chunk
 
-def config_to_model(config: TypedDict) -> TransXModel:
+def config_to_model(_logger: loguru.Logger, config: TypedDict) -> TransXModel:
   """
   Convert the config into a model
   """
   if config['model'] == 'faster_whisper':
-    return WhisperTransXModel(config['_logger'], config) # type: ignore
+    return WhisperTransXModel(_logger, config) # type: ignore
   raise RuntimeError('Unsupported model')
 
-def verify_and_prepare_models(config: TypedDict, download=False):
+def verify_and_prepare_models(_logger: loguru.Logger, config: TypedDict, download=False):
   """
   Check if the model is downloaded and download it if not
   """
-  model = config_to_model(config)
+  model = config_to_model(_logger, config)
   model.prepare_dependencies(download)
 
 def transx_from_audio_stream(transx_config: TransXConfig):
@@ -559,7 +560,7 @@ def transx_from_audio_stream(transx_config: TransXConfig):
   close_fast = False
   process_list: List[Popen[bytes]] = []
   try:
-    model = config_to_model(transx_config)
+    model = config_to_model(_logger, transx_config['model_config'])
     _logger.info('Loading model')
     model.prepare_model()
     _logger.info('Model loading complete')
@@ -614,7 +615,7 @@ def transx_from_queue(transx_config: TransXConfig, input_queue: mp.Queue):
   transx_output_queue = transx_config['output_queue']
   close_fast = False
   try:
-    model = config_to_model(transx_config)
+    model = config_to_model(_logger, transx_config['model_config'])
     _logger.info('Loading model')
     model.prepare_model()
     _logger.info('Model loading complete')

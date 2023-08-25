@@ -1,31 +1,291 @@
-<head>
-  <link href="https://vjs.zencdn.net/8.3.0/video-js.css" rel="stylesheet" />
-</head>
+<!doctype html>
+<html data-bs-theme="dark">
+  <head>
+    <!-- Required meta tags -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 
-<body>
-  <video
-    style="width: 100% !important; height: auto !important;"
-    id="smatter-stream"
-    class="video-js vjs-default-skin vjs-fluid vjs-16-9"
-    controls
-    preload="auto"
-    liveui="true"
-    poster="poster.png"
-    width="auto"
-    fullscreen='{"options": {"navigationUI": "show"}'
-    data-setup='{"plugins": {"reloadSourceOnError": {}}}'
-  >
-    <source src="stream/stream.m3u8" type="application/x-mpegURL" />
-    <track kind="subtitles" label="Smatter" id="smatter" default />
-    <p class="vjs-no-js">
-      To view this video please enable JavaScript, and consider upgrading to a
-      web browser that
-      <a href="https://videojs.com/html5-video-support/" target="_blank"
-        >supports HTML5 video</a
-      >
-    </p>
-  </video>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-4bw+/aepP/YC94hEpVNVgiZdgIC5+VKNBQNGCHeKRQN+PtmoHDEXuppvnDJzQIu9" crossorigin="anonymous">
+    <link href="https://vjs.zencdn.net/8.3.0/video-js.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+  </head>
 
-  <script src="https://vjs.zencdn.net/8.3.0/video.min.js"></script>
-  <script src="js/smatter.js"></script>
-</body>
+  <body>
+    <div class="container p-1" role="navigation">
+      <div class="row justify-content-start">
+        <div class="col-auto">
+          <ul class="nav nav-tabs" id="smatter-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" id="home-tab" data-bs-toggle="tab" data-bs-target="#watch" type="button" role="tab" aria-controls="watch" aria-selected="true">Watch</button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="source-tab" data-bs-toggle="tab" data-bs-target="#source" type="button" role="tab" aria-controls="source" aria-selected="false">Source</button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="data-tab" data-bs-toggle="tab" data-bs-target="#data" type="button" role="tab" aria-controls="data" aria-selected="false">
+                <i class="bi bi-x-circle-fill text-warning" id="ind-model"></i>
+                <i class="bi bi-x-circle-fill text-warning" id="ind-stream"></i>
+                <i class="bi bi-x-circle-fill text-warning" id="ind-subs"></i>
+                <i class="bi bi-stop-circle-fill text-info" id="ind-transx"></i>
+              </button>
+            </li>
+          </ul>
+        </div>
+        <div class="col-1 align-self-center">
+          <button class="btn btn-outline-primary disabled" data-bs-toggle="button" type="button" id="smatter-toggle">
+            <i class="bi bi-translate"></i>
+        </div>
+      </div>
+    </div>
+    <div class="tab-content" id="smatter-tabsContent">
+      <div class="tab-pane fade show active" id="watch" role="tabpanel" aria-labelledby="watch-tab">
+        <video
+          style="width: 100% !important; height: auto !important;"
+          id="smatter-stream"
+          class="video-js vjs-default-skin vjs-fluid vjs-16-9"
+          controls
+          preload="auto"
+          liveui="true"
+          poster="poster.png"
+          width="auto"
+          fullscreen='{"options": {"navigationUI": "show"}'
+          data-setup='{"plugins": {"reloadSourceOnError": {}}}'
+        >
+          <source src="stream/stream.m3u8" type="application/x-mpegURL" />
+          <track kind="subtitles" label="Smatter" id="smatter" default />
+          <p class="vjs-no-js">
+            To view this video please enable JavaScript, and consider upgrading to a
+            web browser that
+            <a href="https://videojs.com/html5-video-support/" target="_blank">supports HTML5 video</a>
+          </p>
+        </video>
+      </div>
+      <div class="tab-pane fade" id="source" role="tabpanel" aria-labelledby="source-tab">
+        <div class="row mb-2">
+          <div class="col-sm-8">
+            <label for="source-url" class="form-label">Source URL</label>
+            <input type="url" class="form-control" id="source-url" placeholder="http://example.com">
+          </div>
+          <div class="col-sm-2">
+            <label for="quality" class="form-label">Quality</label>
+            <input type="text" class="form-control" id="quality" placeholder="480">   
+          </div>
+          <div class="col-sm-2">
+            <label for="start-point" class="form-label">Start</label>
+            <input type="text" class="form-control" id="start-point" placeholder="01:00"> 
+          </div>
+        </div>
+        <div class="row mb-2">
+          <div class="col-sm-5">
+            <label for="language" class="form-label">Source Language</label>
+            <input class="form-control" list="languageSuggestions" id="language" placeholder="English (en)">
+          </div>
+          <div class="col-sm-5 mb-2">
+            <label for="task" class="form-label">Task (Goal)</label>
+            <select class="form-select" id="task" placeholder="Translate">
+              <option selected value="translate">Translate</option>
+              <option value="transcribe">Transcribe</option>
+            </select>
+          </div>
+          <div class="col-sm-2 mt-auto mb-2">
+            <button class="btn btn-outline-primary" type="button" id="source-update">
+              Update
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="tab-pane fade" id="data" role="tabpanel" aria-labelledby="data-tab">
+        TODO: Data
+      </div>
+    </div>
+
+    <datalist id="languageSuggestions">
+      <option value="Abkhazian (ab)">
+      <option value="Afar (aa)">
+      <option value="Afrikaans (af)">
+      <option value="Akan (ak)">
+      <option value="Albanian (sq)">
+      <option value="Amharic (am)">
+      <option value="Arabic (ar)">
+      <option value="Aragonese (an)">
+      <option value="Armenian (hy)">
+      <option value="Assamese (as)">
+      <option value="Avaric (av)">
+      <option value="Avestan (ae)">
+      <option value="Aymara (ay)">
+      <option value="Azerbaijani (az)">
+      <option value="Bambara (bm)">
+      <option value="Bashkir (ba)">
+      <option value="Basque (eu)">
+      <option value="Belarusian (be)">
+      <option value="Bengali (bn)">
+      <option value="Bislama (bi)">
+      <option value="Bosnian (bs)">
+      <option value="Breton (br)">
+      <option value="Bulgarian (bg)">
+      <option value="Burmese (my)">
+      <option value="Catalan, Valencian (ca)">
+      <option value="Chamorro (ch)">
+      <option value="Chechen (ce)">
+      <option value="Chichewa, Chewa, Nyanja (ny)">
+      <option value="Chinese (zh)">
+      <option value="Church Slavonic, Old Slavonic, Old Church Slavonic (cu)">
+      <option value="Chuvash (cv)">
+      <option value="Cornish (kw)">
+      <option value="Corsican (co)">
+      <option value="Cree (cr)">
+      <option value="Croatian (hr)">
+      <option value="Czech (cs)">
+      <option value="Danish (da)">
+      <option value="Divehi, Dhivehi, Maldivian (dv)">
+      <option value="Dutch, Flemish (nl)">
+      <option value="Dzongkha (dz)">
+      <option value="English (en)">
+      <option value="Esperanto (eo)">
+      <option value="Estonian (et)">
+      <option value="Ewe (ee)">
+      <option value="Faroese (fo)">
+      <option value="Fijian (fj)">
+      <option value="Finnish (fi)">
+      <option value="French (fr)">
+      <option value="Western Frisian (fy)">
+      <option value="Fulah (ff)">
+      <option value="Gaelic, Scottish Gaelic (gd)">
+      <option value="Galician (gl)">
+      <option value="Ganda (lg)">
+      <option value="Georgian (ka)">
+      <option value="German (de)">
+      <option value="Greek, Modern (1453-) (el)">
+      <option value="Kalaallisut, Greenlandic (kl)">
+      <option value="Guarani (gn)">
+      <option value="Gujarati (gu)">
+      <option value="Haitian, Haitian Creole (ht)">
+      <option value="Hausa (ha)">
+      <option value="Hebrew (he)">
+      <option value="Herero (hz)">
+      <option value="Hindi (hi)">
+      <option value="Hiri Motu (ho)">
+      <option value="Hungarian (hu)">
+      <option value="Icelandic (is)">
+      <option value="Ido (io)">
+      <option value="Igbo (ig)">
+      <option value="Indonesian (id)">
+      <option value="Interlingua (International Auxiliary Language Association) (ia)">
+      <option value="Interlingue, Occidental (ie)">
+      <option value="Inuktitut (iu)">
+      <option value="Inupiaq (ik)">
+      <option value="Irish (ga)">
+      <option value="Italian (it)">
+      <option value="Japanese (ja)">
+      <option value="Javanese (jv)">
+      <option value="Kannada (kn)">
+      <option value="Kanuri (kr)">
+      <option value="Kashmiri (ks)">
+      <option value="Kazakh (kk)">
+      <option value="Central Khmer (km)">
+      <option value="Kikuyu, Gikuyu (ki)">
+      <option value="Kinyarwanda (rw)">
+      <option value="Kirghiz, Kyrgyz (ky)">
+      <option value="Komi (kv)">
+      <option value="Kongo (kg)">
+      <option value="Korean (ko)">
+      <option value="Kuanyama, Kwanyama (kj)">
+      <option value="Kurdish (ku)">
+      <option value="Lao (lo)">
+      <option value="Latin (la)">
+      <option value="Latvian (lv)">
+      <option value="Limburgan, Limburger, Limburgish (li)">
+      <option value="Lingala (ln)">
+      <option value="Lithuanian (lt)">
+      <option value="Luba-Katanga (lu)">
+      <option value="Luxembourgish, Letzeburgesch (lb)">
+      <option value="Macedonian (mk)">
+      <option value="Malagasy (mg)">
+      <option value="Malay (ms)">
+      <option value="Malayalam (ml)">
+      <option value="Maltese (mt)">
+      <option value="Manx (gv)">
+      <option value="Maori (mi)">
+      <option value="Marathi (mr)">
+      <option value="Marshallese (mh)">
+      <option value="Mongolian (mn)">
+      <option value="Nauru (na)">
+      <option value="Navajo, Navaho (nv)">
+      <option value="North Ndebele (nd)">
+      <option value="South Ndebele (nr)">
+      <option value="Ndonga (ng)">
+      <option value="Nepali (ne)">
+      <option value="Norwegian (no)">
+      <option value="Norwegian Bokmål (nb)">
+      <option value="Norwegian Nynorsk (nn)">
+      <option value="Sichuan Yi, Nuosu (ii)">
+      <option value="Occitan (oc)">
+      <option value="Ojibwa (oj)">
+      <option value="Oriya (or)">
+      <option value="Oromo (om)">
+      <option value="Ossetian, Ossetic (os)">
+      <option value="Pali (pi)">
+      <option value="Pashto, Pushto (ps)">
+      <option value="Persian (fa)">
+      <option value="Polish (pl)">
+      <option value="Portuguese (pt)">
+      <option value="Punjabi, Panjabi (pa)">
+      <option value="Quechua (qu)">
+      <option value="Romanian, Moldavian, Moldovan (ro)">
+      <option value="Romansh (rm)">
+      <option value="Rundi (rn)">
+      <option value="Russian (ru)">
+      <option value="Northern Sami (se)">
+      <option value="Samoan (sm)">
+      <option value="Sango (sg)">
+      <option value="Sanskrit (sa)">
+      <option value="Sardinian (sc)">
+      <option value="Serbian (sr)">
+      <option value="Shona (sn)">
+      <option value="Sindhi (sd)">
+      <option value="Sinhala, Sinhalese (si)">
+      <option value="Slovak (sk)">
+      <option value="Slovenian (sl)">
+      <option value="Somali (so)">
+      <option value="Southern Sotho (st)">
+      <option value="Spanish, Castilian (es)">
+      <option value="Sundanese (su)">
+      <option value="Swahili (sw)">
+      <option value="Swati (ss)">
+      <option value="Swedish (sv)">
+      <option value="Tagalog (tl)">
+      <option value="Tahitian (ty)">
+      <option value="Tajik (tg)">
+      <option value="Tamil (ta)">
+      <option value="Tatar (tt)">
+      <option value="Telugu (te)">
+      <option value="Thai (th)">
+      <option value="Tibetan (bo)">
+      <option value="Tigrinya (ti)">
+      <option value="Tonga (Tonga Islands) (to)">
+      <option value="Tsonga (ts)">
+      <option value="Tswana (tn)">
+      <option value="Turkish (tr)">
+      <option value="Turkmen (tk)">
+      <option value="Twi (tw)">
+      <option value="Uighur, Uyghur (ug)">
+      <option value="Ukrainian (uk)">
+      <option value="Urdu (ur)">
+      <option value="Uzbek (uz)">
+      <option value="Venda (ve)">
+      <option value="Vietnamese (vi)">
+      <option value="Volapük (vo)">
+      <option value="Walloon (wa)">
+      <option value="Welsh (cy)">
+      <option value="Wolof (wo)">
+      <option value="Xhosa (xh)">
+      <option value="Yiddish (yi)">
+      <option value="Yoruba (yo)">
+      <option value="Zhuang, Chuang (za)">
+      <option value="Zulu (zu)">              
+    </datalist>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/js/bootstrap.bundle.min.js" integrity="sha384-HwwvtgBNo3bZJJLYd8oVXjrBZt8cqVSpeBNS5n7C8IVInixGAoxmnlMuBnhbgrkm" crossorigin="anonymous"></script>
+    <script src="https://vjs.zencdn.net/8.3.0/video.min.js"></script>
+    <script src="js/smatter.js"></script>
+  </body>
+</html>
