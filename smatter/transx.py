@@ -92,8 +92,8 @@ class TransXModel(abc.ABC):
     self,
     audio: np.ndarray,
     start_offset: float,
-    language: Optional[str] = None,
-    goal: Optional[Literal['transcribe', 'translate']] = None,
+    language: Optional[str],
+    goal: Optional[Literal['transcribe', 'translate']],
     **kwargs) -> List[TransXData]:
     """
     Generate transx of the provided
@@ -254,8 +254,8 @@ class WhisperTransXModel(TransXModel):
       self,
       audio: np.ndarray,
       start_offset: float,
-      language: Optional[str] = None,
-      goal: Optional[Literal['transcribe', 'translate']] = None,
+      language: Optional[str],
+      goal: Optional[Literal['transcribe', 'translate']],
       **kwargs) -> List[TransXData]:
     if self.model is None:
       raise RuntimeError('Model not loaded')
@@ -324,7 +324,11 @@ class InteractiveTransXProcess():
       return 'running'
     return 'complete'
 
-  def start(self, requested_start: str):
+  def start(
+      self,
+      requested_start: str,
+      language: Optional[str],
+      goal: Optional[Literal['transcribe', 'translate']]):
     """
     Start the TransX process
     based on the current
@@ -341,8 +345,12 @@ class InteractiveTransXProcess():
       base_path='',
       stream_url='',
     )
-    tx_piped_args: Tuple[TransXConfig, mp.Queue] = (
-      tx_config, self.input_queue
+    tx_piped_args: Tuple[
+        TransXConfig,
+        mp.Queue,
+        Optional[str],
+        Optional[Literal['transcribe', 'translate']]] = (
+      tx_config, self.input_queue, language, goal
     )
     self.__process = mp.Process(target=transx_from_queue, args=tx_piped_args)
     self.__process.start()
@@ -590,7 +598,7 @@ def transx_from_audio_stream(transx_config: TransXConfig):
         .total_seconds()
       )
     chunk_gen = chunk_from_samples(transx_config['stop'], ff_process.stdout.read, 1024)
-    run_transx(transx_config, start_int, model, chunk_gen)
+    run_transx(transx_config, start_int, model, chunk_gen, None, None)
   except Exception as ex:
     _logger.exception(ex)
     close_fast = True
@@ -604,7 +612,12 @@ def transx_from_audio_stream(transx_config: TransXConfig):
         process.terminate()
         _logger.debug('Transx process finished')
 
-def transx_from_queue(transx_config: TransXConfig, input_queue: mp.Queue):
+def transx_from_queue(
+    transx_config: TransXConfig, 
+    input_queue: mp.Queue,
+    language: Optional[str],
+    goal: Optional[Literal['transcribe', 'translate']]
+    ):
   """
   Get a stdout stream from the input queue
   and generated translations from it as fast as
@@ -638,7 +651,7 @@ def transx_from_queue(transx_config: TransXConfig, input_queue: mp.Queue):
           continue
       return None
     chunk_gen = chunk_from_samples(stop, r_fun, 1024)
-    run_transx(transx_config, start_int, model, chunk_gen)
+    run_transx(transx_config, start_int, model, chunk_gen, language, goal)
   except (KeyboardInterrupt, SystemExit):
     _logger.info('Transx process asked to exit, cleaning up.')
     close_fast = True
@@ -654,7 +667,9 @@ def run_transx(
     transx_config: TransXConfig,
     start_int: int,
     model: TransXModel,
-    chunk_gen: Generator[npt.NDArray[np.float32], None, None]
+    chunk_gen: Generator[npt.NDArray[np.float32], None, None],
+    language: Optional[str],
+    goal: Optional[Literal['transcribe', 'translate']]
     ):
   """
   Will run transx on the provided
@@ -671,7 +686,7 @@ def run_transx(
     if stop.is_set():
       break
     start_time = float(start) / 16000.0
-    transx_data = model.transx(voice, start_time)
+    transx_data = model.transx(voice, start_time, language, goal)
     for transx in transx_data:
       count += 1
       if _format == 'plain':

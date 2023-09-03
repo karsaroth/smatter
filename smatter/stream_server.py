@@ -262,7 +262,9 @@ class StreamRequestHandler:
             )
             self.state['stream_input'].start()
             self.state['transx'].start(
-              self.state['requested_start'] if self.state['requested_start'] else '0'
+              self.state['requested_start'] if self.state['requested_start'] else '0',
+              self.state['language'],
+              self.state['goal']
             )
             self.state['stream_output'].start()
           case 'stop':
