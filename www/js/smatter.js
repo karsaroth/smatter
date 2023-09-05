@@ -23,8 +23,16 @@ sourceButton.addEventListener('click', async function() {
   const source = document.getElementById('source-url').value;
   const quality = document.getElementById('quality').value;
   const startPoint = document.getElementById('start-point').value;
-  const sourceLanguage = document.getElementById('language').value;
+  let sourceLanguage = document.getElementById('language').value;
   const task = document.getElementById('task').value;
+  //Check if source language matches a suggestion format (e.g. 'English (en)') 
+  //using regex and if so, extract the language code from the suggestion
+  const sourceLanguageRegex = /.*\((.*)\)/;
+  const sourceLanguageMatch = sourceLanguage.match(sourceLanguageRegex);
+  if (sourceLanguageMatch !== null) {
+    sourceLanguage = sourceLanguageMatch[1];
+  }
+
   req = {
     "action": "set",
     "stream_url": source,
@@ -42,14 +50,7 @@ sourceButton.addEventListener('click', async function() {
 
   const response = await fetch('/smatter/state', {
     method: 'POST',
-    body: JSON.stringify({
-      "action": "set",
-      "stream_url": source,
-      "language": sourceLanguage,
-      "requested_start": startPoint,
-      "goal": task,
-      "quality": quality
-    }),
+    body: JSON.stringify(req),
     headers: {
       'Content-Type': 'application/json'
     }

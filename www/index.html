@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
   </head>
 
-  <body>
+  <body style="height: 100%;">
     <div class="container p-1" role="navigation">
       <div class="row justify-content-start">
         <div class="col-auto">
@@ -37,19 +37,21 @@
         </div>
       </div>
     </div>
-    <div class="tab-content" id="smatter-tabsContent">
-      <div class="tab-pane fade show active" id="watch" role="tabpanel" aria-labelledby="watch-tab">
+    <div class="tab-content" style="height: 94vh;" id="smatter-tabsContent">
+      <div class="tab-pane fade show active" style="height: 94vh;" id="watch" role="tabpanel" aria-labelledby="watch-tab">
         <video
-          style="width: 100% !important; height: auto !important;"
           id="smatter-stream"
-          class="video-js vjs-default-skin vjs-fluid vjs-16-9"
+          class="video-js vjs-default-skin vjs-fill"
           controls
           preload="auto"
           liveui="true"
           poster="poster.png"
-          width="auto"
           fullscreen='{"options": {"navigationUI": "show"}'
-          data-setup='{"plugins": {"reloadSourceOnError": {}}}'
+          data-setup='{
+            "plugins": {
+              "reloadSourceOnError": {}
+            }
+          }'
         >
           <source src="stream/stream.m3u8" type="application/x-mpegURL" />
           <track kind="subtitles" label="Smatter" id="smatter" default />
