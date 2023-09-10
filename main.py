@@ -7,6 +7,7 @@ for the smatter tool
 from __future__ import annotations
 from multiprocessing.synchronize import Event
 from multiprocessing.connection import PipeConnection
+import string
 from typing import Callable, List, Literal, NoReturn, Tuple
 from pathlib import Path
 import time
@@ -234,12 +235,17 @@ def main():
   stream_output_dir = cache_dir / 'stream'
 
   # Read default gigo if available
-  gigo_file = Path('./gigo.txt')
+  gigo_file = Path('./gigo_phrases.txt')
   gigo_phrases: List[str] = []
   if gigo_file.exists():
     _logger.info('Loading gigo phrases from gigo.txt')
     with gigo_file.open('r', encoding='UTF-8') as gigo:
       gigo_phrases = gigo.readlines()
+  gigo_phrases = [
+    phrase.translate(str.maketrans('', '', string.punctuation))
+          .casefold()
+    for phrase in gigo_phrases
+  ]
   _logger.info('gigo phrases: {gigo}', gigo=gigo_phrases)
 
   default_lang = 'en'

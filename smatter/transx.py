@@ -319,10 +319,23 @@ class InteractiveTransXProcess():
     TransX process
     """
     if self.__process is None:
-      return 'stopped'
+      return False
     if self.__process.is_alive():
-      return 'running'
-    return 'complete'
+      return True
+    return False
+
+  def status_detail(self):
+    """
+    Return the status of the
+    TransX process in detail
+    """
+    if self.__process is None:
+      return 'Stopped'
+    if self.__process.is_alive() and not self.stopper.is_set():
+      return 'Running (extra info TODO)'
+    if self.__process.is_alive() and self.stopper.is_set():
+      return 'Stopping/Blocked'
+    return 'Stopped/Complete'
 
   def start(
       self,

@@ -8,6 +8,11 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-4bw+/aepP/YC94hEpVNVgiZdgIC5+VKNBQNGCHeKRQN+PtmoHDEXuppvnDJzQIu9" crossorigin="anonymous">
     <link href="https://vjs.zencdn.net/8.3.0/video-js.css" rel="stylesheet" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <style type="text/css">
+      .video-js .vjs-time-control{display:block;}
+      .video-js .vjs-remaining-time{display: none;}
+    </style>
+    <title>Smatter</title>
   </head>
 
   <body style="height: 100%;">
@@ -32,7 +37,7 @@
           </ul>
         </div>
         <div class="col-1 align-self-center">
-          <button class="btn btn-outline-primary disabled" data-bs-toggle="button" type="button" id="smatter-toggle">
+          <button class="btn btn-primary disabled" data-bs-toggle="button" type="button" id="smatter-toggle">
             <i class="bi bi-translate"></i>
         </div>
       </div>
@@ -97,7 +102,55 @@
         </div>
       </div>
       <div class="tab-pane fade" id="data" role="tabpanel" aria-labelledby="data-tab">
-        TODO: Data
+        <div class="container">
+          <div class="row">
+            <div class="col-3">
+              <div class="alert alert-danger" id="ind-data-model" role="alert">
+                Model
+              </div>
+            </div>
+            <div class="col-3">
+              <div class="alert alert-danger" id="ind-data-input" role="alert">
+                Input
+              </div>
+            </div>
+            <div class="col-3">
+              <div class="alert alert-danger" id="ind-data-transx" role="alert">
+                Translation
+              </div>
+            </div>
+            <div class="col-3">
+              <div class="alert alert-danger" id="ind-data-output" role="alert">
+                Output
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="container">
+          <div class="row">
+            <div class="col-6">
+              <h3>Log Messages:</h3>
+              <p class="text-muted fs-6">
+                Some log messages may be useful to see on this page, and will show up here,
+                if the server is configured to send them.
+              </p>    
+            </div>
+            <div class="col-6">
+              <h3>Translation History:</h3>
+              <p class="text-muted fs-6">
+                "..." (undefined) text is a placeholder for timeframes without detected speech, to avoid
+                long periods of non-speech causing the video to be paused unnecessarily.</p>        
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-6">
+              <pre class="overflow-scroll" style="max-height: 50vh;"><code id="log-area"></code></pre>
+            </div>
+            <div class="col-6">
+              <pre class="overflow-scroll" style="max-height: 50vh;"><code id="transx-history-area"></code></pre>              
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

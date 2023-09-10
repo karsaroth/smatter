@@ -126,7 +126,7 @@ class StreamRequestHandler:
         else:
           return web.Response(status=web.HTTPNotFound.status_code)
         if not os.path.exists(os.path.join(self.stream, file)):
-          return web.Response(status=web.HTTPInternalServerError.status_code)
+          return web.Response(status=web.HTTPServiceUnavailable.status_code)
         content = open(os.path.join(self.stream, file), r_type).read()
         return web.Response(content_type=c_type, body=content)
       return web.Response(status=web.HTTPNotFound.status_code)
@@ -198,10 +198,21 @@ class StreamRequestHandler:
       return web.json_response({
         'model': self.status['model_loaded'].is_set(),
         'stream': self.__ready_for_stream(),
-        'transx_state': self.state['transx'].status(),
+        'stream_input': {
+          'running': self.state['stream_input'].is_running(),
+          'detail': self.state['stream_input'].status_detail()
+        },
+        'stream_output': {
+          'running': self.state['stream_output'].is_running(),
+          'detail': self.state['stream_output'].status_detail()
+        },
+        'transx': {
+          'running': self.state['transx'].status(),
+          'detail': self.state['transx'].status_detail()
+        },
         'logs': self.state['logs']
       })
-    
+
     return handler
 
   def post_state_change(self):
@@ -221,7 +232,7 @@ class StreamRequestHandler:
             if self.status['model_loading'].is_set() \
                 or self.status['model_loaded'].is_set() \
                 or self.output_queue_complete \
-                or self.state['transx'].status() == 'running':
+                or self.state['transx'].status():
               return web.StreamResponse(status=web.HTTPConflict.status_code)
             self.status['model_loading'].set()
             def check_model():

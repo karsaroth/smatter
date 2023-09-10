@@ -55,6 +55,20 @@ class SubprocessManager(abc.ABC):
     remains after stopping
     """
 
+  @abc.abstractmethod
+  def status_detail(self):
+    """
+    Returns a human readable
+    string with status details
+    """
+
+  def is_running(self):
+    """
+    Returns True if any subprocesses
+    or threads are still running.
+    """
+    return len(self.subprocesses) > 0 or len(self.threads) > 0
+
   def stop(self):
     """
     Sends a stop signal to all
@@ -81,13 +95,14 @@ class SubprocessManager(abc.ABC):
       try:
         self.logger.info('Terminating subprocess {pid}', pid=_subprocess.pid)
         if _subprocess.poll() is None:
+          _subprocess.send_signal(signal.SIGINT)
+          time.sleep(0.3)
+        if _subprocess.poll() is None:
           _subprocess.terminate()
           time.sleep(0.3)
         if _subprocess.poll() is None:
           _subprocess.kill()
           time.sleep(0.3)
-        if _subprocess.pid:
-          os.kill(_subprocess.pid, signal.SIGINT)
         self.logger.info('Subprocess {pid} should now be terminated', pid=_subprocess.pid)
       except Exception as ex:
         self.logger.exception(ex)
@@ -122,6 +137,31 @@ class MultiprocessStreamInput(SubprocessManager):
     self.pcm_queue = mp.Queue()
     self.passthrough_queue = mp.Queue()
 
+  def status_detail(self):
+    if len(self.subprocesses) == 0:
+      if len(self.threads) > 0:
+        return 'Waiting/Blocked'
+      return 'Stopped'
+    if len(self.subprocesses) == 1:
+      return 'Partially Running/Blocked'
+    if len(self.subprocesses) == 2:
+      if self.stopper.is_set():
+        return 'Stopping/Blocked'
+      stdout = self.subprocesses[0].stdout
+      stdin = self.subprocesses[1].stdin
+      if stdout:
+        out_pipe_size = os.fstat(stdout.fileno()).st_size
+      else:
+        out_pipe_size = 0
+      if stdin:
+        in_pipe_size = os.fstat(stdin.fileno()).st_size
+      else:
+        in_pipe_size = 0
+      return f'''yt| [{out_pipe_size}],
+                 ff| [{in_pipe_size}], 
+                 PCM Q [{self.pcm_queue.qsize()}]'''
+    return 'Unknown/Unexpected State'
+
   def start(self):
     """
     Starts a stream input and returns
@@ -152,18 +192,18 @@ class MultiprocessStreamInput(SubprocessManager):
       self.threads.append(ff_log_thread)
 
   def state_cleanup(self):
-    while not self.pcm_queue.empty():
-      try:
+    try:
+      while not self.pcm_queue.empty():
         # Clean out the pcm queue
         self.pcm_queue.get_nowait()
-      except queue.Empty:
-        break
-    while not self.passthrough_queue.empty():
-      try:
+    except (queue.Empty, ValueError):
+      self.logger.info('PCM Queue empty/closed, clean complete.')
+    try:
+      while not self.passthrough_queue.empty():
         # Clean out the passthrough queue
         self.passthrough_queue.get_nowait()
-      except queue.Empty:
-        break
+    except (queue.Empty, ValueError):
+      self.logger.info('Passthrough Queue empty/closed, clean complete.')
 
 class MultiprocessStreamOutput(SubprocessManager):
   """
@@ -239,6 +279,24 @@ class MultiprocessStreamOutput(SubprocessManager):
         log_thread.start()
 
     return ff_process, feed_thread, log_thread
+
+  def status_detail(self):
+    if len(self.subprocesses) == 0:
+      if len(self.threads) > 0:
+        return 'Waiting/Blocked'
+      return 'Stopped'
+    if len(self.subprocesses) == 1:
+      stdin = self.subprocesses[0].stdin
+      if self.stopper.is_set():
+        if self.subprocesses[0].poll() is None:
+          return 'Stopping/Blocked'
+        return 'Stopped'
+      if stdin:
+        pipe_size = os.fstat(stdin.fileno()).st_size
+      else:
+        pipe_size = 0
+      return f'ff| [{pipe_size}], Vid Q [{self.passthrough_queue.qsize() * 8}]'
+    return 'Unknown/Unexpected State'
 
   def start(self):
     """
