@@ -124,7 +124,7 @@ def test_fix_repeated_sounds(input, output, fixed):
     "Hello!"),
     ([
       "Goodbye!",
-      "please subscribe to my channel",
+      "Thank you for watching!",
       "SEE YOU IN THE NEXT VIDEO?"
     ],
     1,
@@ -136,7 +136,7 @@ def test_filter_gigo_results(input, size, first):
   test_gigo_phrases = list(map(lambda x: x.translate(str.maketrans('', '', string.punctuation)).casefold(), [
     'Bye Bye',
     'Please subscribe to my channel',
-    'Thanks for watching',
+    'Thank you for watching',
     'See you in the next video'
   ]))
   config = transx.TransXConfig(
@@ -163,7 +163,7 @@ def test_filter_gigo_results(input, size, first):
 
     def test_filter_gigo_results(self, tx_data):
       return self._WhisperTransXModel__filter_gigo_results(tx_data) # type: ignore
-  
+
   model = MockTransXModel(config) # type: ignore
 
   result = model.test_filter_gigo_results(tx_data)

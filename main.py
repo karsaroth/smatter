@@ -239,10 +239,11 @@ def main():
   gigo_phrases: List[str] = []
   if gigo_file.exists():
     _logger.info('Loading gigo phrases from gigo.txt')
-    with gigo_file.open('r', encoding='UTF-8') as gigo:
+    with gigo_file.open('r', encoding='UTF-8', ) as gigo:
       gigo_phrases = gigo.readlines()
   gigo_phrases = [
-    phrase.translate(str.maketrans('', '', string.punctuation))
+    phrase.strip()
+          .translate(str.maketrans('', '', string.punctuation))
           .casefold()
     for phrase in gigo_phrases
   ]
