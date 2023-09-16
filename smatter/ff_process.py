@@ -75,11 +75,6 @@ class SubprocessManager(abc.ABC):
     subprocesses and threads.
     """
     self.stopper.set()
-    for _subprocess in self.subprocesses:
-      try:
-        _subprocess.terminate()
-      except Exception as ex:
-        self.logger.exception(ex)
 
   def reset(self):
     """
@@ -91,36 +86,40 @@ class SubprocessManager(abc.ABC):
     """
     Cleans up the subprocesses and threads
     """
-    for _subprocess in self.subprocesses:
-      try:
-        self.logger.info('Terminating subprocess {pid}', pid=_subprocess.pid)
-        if _subprocess.poll() is None:
-          _subprocess.send_signal(signal.SIGINT)
-          time.sleep(0.3)
-        if _subprocess.poll() is None:
-          _subprocess.terminate()
-          time.sleep(0.3)
-        if _subprocess.poll() is None:
-          _subprocess.kill()
-          time.sleep(0.3)
-        self.logger.info('Subprocess {pid} should now be terminated', pid=_subprocess.pid)
-      except Exception as ex:
-        self.logger.exception(ex)
-    for thread in self.threads:
-      if thread and thread.is_alive():
-        thread.join(0.3)
-    self.subprocesses = [sp for sp in self.subprocesses if sp.poll() is None]
-    self.threads = [t for t in self.threads if t.is_alive()]
-    self.logger.info('Subprocesses still active: {subprocesses}, Threads still active {threads}',
-                     subprocesses=len(self.subprocesses), threads=len(self.threads))
+    while not self.is_clean():
+      self.logger.info('Cleaning up subprocesses and threads')
+      for _subprocess in self.subprocesses:
+        try:
+          self.logger.info('Terminating subprocess {pid}', pid=_subprocess.pid)
+          if _subprocess.poll() is None:
+            _subprocess.terminate()
+            if _subprocess.stdin:
+              _subprocess.stdin.close()
+            if _subprocess.stdout:
+              _subprocess.stdout.close()
+            if _subprocess.stderr:
+              _subprocess.stderr.close()
+            time.sleep(0.3)
+          if _subprocess.poll() is None:
+            self.logger.info('Killing subprocess {pid}', pid=_subprocess.pid)
+            _subprocess.kill()
+            time.sleep(0.3)
+          self.logger.info('Subprocess {pid} should now be terminated', pid=_subprocess.pid)
+        except Exception as ex:
+          self.logger.exception(ex)
+      self.subprocesses = [sp for sp in self.subprocesses if sp.poll() is None]
+      self.threads = [t for t in self.threads if t.is_alive()]
+      self.logger.info('Subprocesses still active: {subprocesses}, Threads still active {threads}',
+                      subprocesses=len(self.subprocesses), threads=[t.getName() for t in self.threads])
     self.state_cleanup()
+    self.reset()
 
   def is_clean(self):
     """
     Returns True if all subprocesses
-    and threads have been cleaned up.
+    have been cleaned up.
     """
-    return len(self.subprocesses) == 0 and len(self.threads) == 0
+    return len(self.subprocesses) == 0
 
 class MultiprocessStreamInput(SubprocessManager):
   """
@@ -140,13 +139,13 @@ class MultiprocessStreamInput(SubprocessManager):
   def status_detail(self):
     if len(self.subprocesses) == 0:
       if len(self.threads) > 0:
-        return 'Waiting/Blocked'
+        return 'Waiting Blocked'
       return 'Stopped'
     if len(self.subprocesses) == 1:
-      return 'Partially Running/Blocked'
+      return 'Partially Running Blocked'
     if len(self.subprocesses) == 2:
       if self.stopper.is_set():
-        return 'Stopping/Blocked'
+        return 'Stopping Blocked'
       stdout = self.subprocesses[0].stdout
       stdin = self.subprocesses[1].stdin
       if stdout:
@@ -160,7 +159,7 @@ class MultiprocessStreamInput(SubprocessManager):
       return f'''yt| [{out_pipe_size}],
                  ff| [{in_pipe_size}], 
                  PCM Q [{self.pcm_queue.qsize()}]'''
-    return 'Unknown/Unexpected State'
+    return 'Unexpected State'
 
   def start(self):
     """
@@ -196,14 +195,136 @@ class MultiprocessStreamInput(SubprocessManager):
       while not self.pcm_queue.empty():
         # Clean out the pcm queue
         self.pcm_queue.get_nowait()
-    except (queue.Empty, ValueError):
+    except (queue.Empty, ValueError, OSError):
       self.logger.info('PCM Queue empty/closed, clean complete.')
     try:
       while not self.passthrough_queue.empty():
         # Clean out the passthrough queue
         self.passthrough_queue.get_nowait()
-    except (queue.Empty, ValueError):
+    except (queue.Empty, ValueError, OSError):
       self.logger.info('Passthrough Queue empty/closed, clean complete.')
+    self.passthrough_queue = mp.Queue()
+    self.pcm_queue = mp.Queue()
+
+def input_process_start(
+  stop: Event,
+  _logger: loguru.Logger,
+  debug: bool,
+  input_config: StreamInputConfig,
+  pcm_queue: mp.Queue,
+  passthrough_queue: mp.Queue):
+  """
+  A wrapper for the start method
+  which allows it to be used
+  as a target for a multiprocessing
+  process.
+  """
+  stream_input = MultiprocessStreamInput(_logger, input_config, debug)
+  try:
+    stream_input.pcm_queue = pcm_queue
+    stream_input.passthrough_queue = passthrough_queue
+    stream_input.start()
+    while not stop.is_set():
+      time.sleep(0.1)
+  except KeyboardInterrupt:
+    _logger.info('Keyboard Interrupt received, stopping.')
+  except Exception as ex:
+    _logger.exception(ex)
+  finally:
+    try:
+      stream_input.stop()
+      time.sleep(0.1)
+      stream_input.cleanup()
+    except Exception as ex:
+      _logger.exception(ex)
+
+class ProcessWrappedStreamInput():
+  """
+    A wrapper for the stream input
+    which allows it to be used
+    as a target for a multiprocessing
+    process.
+  """
+  def __init__(self,
+               _logger: loguru.Logger,
+               input_config: StreamInputConfig,
+               debug = False):
+    self.stopper = mp.Event()
+    self.logger = _logger
+    self.debug = debug
+    self.input_config = input_config
+    self.pcm_queue = mp.Queue()
+    self.passthrough_queue = mp.Queue()
+    self.__process: ty.Optional[mp.Process] = None
+    self.__cleanup_thread: ty.Optional[th.Thread] = None
+
+  def __cleanup(self):
+    """
+    Cleans up the process
+    """
+    def job():
+      time.sleep(3)
+      while self.__process and self.__process.is_alive():
+        self.__process.terminate()
+        time.sleep(0.5)
+        if self.__process.is_alive():
+          self.__process.kill()
+      self.__process = None
+    self.__cleanup_thread = th.Thread(
+      name='input_process_cleanup',
+      target=job,
+      daemon=True
+    )
+
+  def start(self):
+    """
+    Starts a stream input and returns
+    a queue which will contain the stream
+    data.
+    """
+    if self.__process and self.__process.is_alive():
+      raise RuntimeError('Process already started.')
+    self.stopper = mp.Event()
+    self.__process = mp.Process(
+      name='input_process',
+      target=input_process_start,
+      daemon=True,
+      args=(
+        self.stopper,
+        self.logger,
+        self.debug,
+        self.input_config,
+        self.pcm_queue,
+        self.passthrough_queue
+      )
+    )
+    self.__process.start()
+
+  def stop(self):
+    """
+    Sends a stop signal to the
+    process. Also initiates cleanup
+    of the process in a separate thread.
+    """
+    self.stopper.set()
+    self.__cleanup()
+
+  def status_detail(self):
+    """
+    Returns a human readable
+    string with status details
+    """
+    if self.__process and self.__process.is_alive():
+      return f'''Running, pid: [{self.__process.pid}]
+                 PCM Q [{self.pcm_queue.qsize()}]'''
+    return 'Stopped'
+
+  def is_running(self):
+    """
+    Returns True if the processes
+    is still running.
+    """
+    return self.__process and self.__process.is_alive()
 
 class MultiprocessStreamOutput(SubprocessManager):
   """
@@ -311,7 +432,7 @@ class MultiprocessStreamOutput(SubprocessManager):
 
   def state_cleanup(self):
     # Delete all files in base_dir
-    if len(list(self.base_dir.glob('*'))) > 0:
+    while len(list(self.base_dir.glob('*'))) > 0:
       self.logger.info('Deleting files in {dir}', dir=self.base_dir.absolute().as_posix())
       for file in self.base_dir.glob('*'):
         file.unlink()
@@ -424,7 +545,7 @@ def url_into_pcm_pipe(
     stop: Event,
     _logger: loguru.Logger,
     base_dir: str,
-    url: str, 
+    url: str,
     start: str):
   """
   Uses yt-dlp and ffmpeg to produce a stream of pcm data
@@ -467,7 +588,14 @@ def url_into_pcm_pipe(
   ff_process = ff.run_async(ff_out_pcm, pipe_stdout=True, pipe_stdin=True)
   if not ff_process.stdout or not ff_process.stdin:
     raise RuntimeError('Could not start pcm ffmpeg process.')
-  feed_thread = u.pipe_to_pipe(stop, _logger, 'ytdlp_to_ffmepg_pcm', 8192, yt_dlp_process.stdout, ff_process.stdin)
+  feed_thread = u.pipe_to_pipe(
+    stop,
+    _logger,
+    'ytdlp_to_ffmepg_pcm', 
+    8192,
+    yt_dlp_process.stdout,
+    ff_process.stdin
+  )
   feed_thread.start()
   return yt_dlp_process, ff_process, feed_thread
 

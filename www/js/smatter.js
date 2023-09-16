@@ -20,6 +20,14 @@ const subHistory = [];
 var subBufferPause = false;
 var modal;
 
+//Stream ready timeout
+var streamReady;
+
+/**
+ * Escape HTML characters in a string
+ * @param {string} unsafe The potentially unsafe for HTML string
+ * @returns An escaped string
+ */
 function escapeHtml(unsafe) {
   return unsafe
        .replace(/&/g, "&amp;")
@@ -29,6 +37,11 @@ function escapeHtml(unsafe) {
        .replace(/'/g, "&#039;");
 }
 
+/**
+ * Switches the boolean indicators on the page
+ * @param {boolean} bool The boolean value to switch to
+ * @param {HTMLElement} element The element to switch
+ */
 function switchBooleanIndicator(bool, element) {
   if (bool) {
     element.classList.remove('bi-x-circle-fill');
@@ -43,6 +56,14 @@ function switchBooleanIndicator(bool, element) {
   }
 }
 
+/**
+ * Updates the alert components of the info
+ * tab
+ * @param {boolean} bool Will override color if false to red
+ * @param {string} status A status message to display
+ * @param {HTMLElement} alert The alert element to update
+ * @param {string} title The title of the alert
+ */
 function updateAlert(bool, status, alert, title) {
   alert.innerHTML = `<h5>${title}:</h5><p>${status}</p>`;
   if (bool) {
@@ -284,3 +305,35 @@ window.onload = async function() {
     console.log(e);
   }
 };
+
+/**
+ * Loop to check if the stream is ready to be played
+ * then load it into the player
+ */
+function checkStreamExists() {
+  console.log('Checking for m3u8 file...');
+  var request = new XMLHttpRequest();
+  request.open('GET', 'stream/stream.m3u8', true);
+  request.send();
+  request.onload = function () {
+    if (request.status === 200) {
+      console.log("Found m3u8.. starting to stream");
+      if (streamReady) {
+        clearTimeout(streamReady);
+      }
+      vid.src({
+        type: 'application/x-mpegURL',
+        src: 'stream/stream.m3u8'
+      });
+    } else {
+      console.log('m3u8 file not found');
+      streamReady = setTimeout(checkStreamExists, 10 * 1000);
+    }
+  }
+}
+
+//Start the stream check loop
+checkStreamExists();
+
+
+

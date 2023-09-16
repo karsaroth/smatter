@@ -278,6 +278,5 @@ def mp_queue_to_pipe(
       _logger.info(f'Keyboard interrupt or system exit, closing {name}')
     except Exception as ex:
       _logger.exception(ex)
-    return
 
   return th.Thread(name=name, target=feed, daemon=True), pipe_out

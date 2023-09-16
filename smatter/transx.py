@@ -365,7 +365,11 @@ class InteractiveTransXProcess():
         Optional[Literal['transcribe', 'translate']]] = (
       tx_config, self.input_queue, language, goal
     )
-    self.__process = mp.Process(target=transx_from_queue, args=tx_piped_args)
+    self.__process = mp.Process(
+      name='transx_process',
+      target=transx_from_queue,
+      args=tx_piped_args
+    )
     self.__process.start()
 
   def stop(self):
@@ -385,12 +389,17 @@ class InteractiveTransXProcess():
       self.__process.join()
       self.__process = None
       self.logger.info('TransX process finished')
-    while not self.input_queue.empty():
-      try:
-        # Clean out the output queue
-        self.input_queue.get_nowait()
-      except queue.Empty:
-        break
+    try:
+      while not self.input_queue.empty():
+        try:
+          # Clean out the output queue
+          self.input_queue.get_nowait()
+        except queue.Empty:
+          break
+      self.input_queue.close()
+    except (ValueError, OSError):
+      pass
+    self.input_queue = mp.Queue()
     self.logger.info('Transx cleanup complete')
 
 def seconds_to_timestamp(seconds, vtt = False):

@@ -7,7 +7,7 @@ import multiprocessing as mp
 import threading as th
 import asyncio
 from pathlib import Path
-from typing import Literal, Optional, TypedDict, List
+from typing import Dict, Literal, Optional, TypedDict, List, Any
 import loguru
 from aiohttp import web
 from smatter.transx import InteractiveTransXProcess
@@ -31,7 +31,7 @@ class StreamState(TypedDict):
   for a Smatter stream
   """
   transx: InteractiveTransXProcess
-  stream_input: ff.MultiprocessStreamInput
+  stream_input: ff.ProcessWrappedStreamInput
   stream_output: ff.MultiprocessStreamOutput
   threads: List[th.Thread]
   logs: List[str]
@@ -67,7 +67,7 @@ class StreamRequestHandler:
         minimal_config['_logger'],
         minimal_config['model_config']
       ),
-      stream_input = ff.MultiprocessStreamInput(
+      stream_input = ff.ProcessWrappedStreamInput(
         minimal_config['_logger'],
         ff.StreamInputConfig(
           url='',
@@ -90,8 +90,6 @@ class StreamRequestHandler:
       goal=None,
       quality=None,
     )
-    self.state['transx'].input_queue = self.state['stream_input'].pcm_queue
-    self.state['stream_output'].passthrough_queue = self.state['stream_input'].passthrough_queue
     self.logger = _logger
     self.subtitle_buffer = []
 
@@ -188,6 +186,65 @@ class StreamRequestHandler:
     thread.start()
     self.state['threads'].append(thread)
 
+  def __start(self):
+    """
+    Start the stream and
+    transx processes
+    """
+    self.state['transx'].input_queue = self.state['stream_input'].pcm_queue
+    self.state['stream_output'].passthrough_queue = \
+        self.state['stream_input'].passthrough_queue
+    self.state['stream_input'].input_config = ff.StreamInputConfig(
+      url=self.state['stream_url'], # type: ignore
+      start=self.state['requested_start'] if self.state['requested_start'] else '0',
+      cache_dir=self.state['cache_dir'],
+      quality=self.state['quality'] # type: ignore
+    )
+    self.state['stream_input'].start()
+    self.state['transx'].start(
+      self.state['requested_start'] if self.state['requested_start'] else '0',
+      self.state['language'],
+      self.state['goal']
+    )
+    self.state['stream_output'].start()
+
+  def __load(self, request_data):
+    """
+    Inital loading of
+    transx model
+    """
+    self.status['model_loading'].set()
+    def check_model():
+      try:
+        self.state['transx'].check_model(
+          request_data['download'] if 'download' in request_data else True
+        )
+        self.status['model_loading'].clear()
+        self.status['model_loaded'].set()
+      except Exception as ex:
+        self.state['logs'].append(str(ex))
+        self.logger.exception(ex)
+        self.status['model_loading'].clear()
+        self.status['model_loaded'].clear()
+    self.__handle_thread(th.Thread(target=check_model))
+
+  def __set_state(self, request_data):
+    """
+    Configure the stream
+    settings
+    """
+    if request_data['requested_start']:
+      if u.hms_match(request_data['requested_start']):
+        self.state['requested_start'] = request_data['requested_start']
+    self.state['stream_url'] = request_data['stream_url'] \
+      if 'stream_url' in request_data else None
+    self.state['language'] = request_data['language'] \
+      if 'language' in request_data else None
+    self.state['goal'] = request_data['goal'] \
+      if 'goal' in request_data else None
+    self.state['quality'] = request_data['quality'] \
+      if 'quality' in request_data else None
+
   def get_status(self):
     """
     Handler to give user
@@ -234,57 +291,29 @@ class StreamRequestHandler:
                 or self.output_queue_complete \
                 or self.state['transx'].status():
               return web.StreamResponse(status=web.HTTPConflict.status_code)
-            self.status['model_loading'].set()
-            def check_model():
-              try:
-                self.state['transx'].check_model(
-                  request_data['download'] if 'download' in request_data else True
-                )
-                self.status['model_loading'].clear()
-                self.status['model_loaded'].set()
-              except Exception as ex:
-                self.state['logs'].append(str(ex))
-                self.logger.exception(ex)
-                self.status['model_loading'].clear()
-                self.status['model_loaded'].clear()
-            self.__handle_thread(th.Thread(target=check_model))
+            self.__load(request_data)
           case 'set':
-            if request_data['requested_start']:
-              if u.hms_match(request_data['requested_start']):
-                self.state['requested_start'] = request_data['requested_start']
-              else:
-                return web.StreamResponse(status=web.HTTPBadRequest.status_code)
-            self.state['stream_url'] = request_data['stream_url'] \
-              if 'stream_url' in request_data else None
-            self.state['language'] = request_data['language'] \
-              if 'language' in request_data else None
-            self.state['goal'] = request_data['goal'] \
-              if 'goal' in request_data else None
-            self.state['quality'] = request_data['quality'] \
-              if 'quality' in request_data else None
+            self.__set_state(request_data)
           case 'start':
             if not self.__ready_for_stream():
               return web.StreamResponse(status=web.HTTPConflict.status_code)
-            self.state['stream_input'].input_config = ff.StreamInputConfig(
-              url=self.state['stream_url'], # type: ignore
-              start=self.state['requested_start'] if self.state['requested_start'] else '0',
-              cache_dir=self.state['cache_dir'],
-              quality=self.state['quality'] # type: ignore
-            )
-            self.state['stream_input'].start()
-            self.state['transx'].start(
-              self.state['requested_start'] if self.state['requested_start'] else '0',
-              self.state['language'],
-              self.state['goal']
-            )
-            self.state['stream_output'].start()
+            self.__start()
           case 'stop':
             self.state['stream_input'].stop()
             self.state['transx'].stop()
             self.state['stream_output'].stop()
-            self.__handle_thread(th.Thread(target=self.state['stream_input'].cleanup()))
-            self.__handle_thread(th.Thread(target=self.state['transx'].cleanup()))
-            self.__handle_thread(th.Thread(target=self.state['stream_output'].cleanup()))
+            self.__handle_thread(
+              th.Thread(
+                name='transx_cleanup',
+                target=self.state['transx'].cleanup
+              )
+            )
+            self.__handle_thread(
+              th.Thread(
+                name='stream_output_cleanup',
+                target=self.state['stream_output'].cleanup
+              )
+            )
             self.subtitle_buffer = []
           case _:
             status=web.HTTPBadRequest.status_code
