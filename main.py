@@ -1,304 +1,173 @@
+"""Exposes Faster Whisper over WebRTC using aiortc."""
+
 from __future__ import annotations
-from multiprocessing.synchronize import Event
-from multiprocessing.connection import PipeConnection
-from tqdm import tqdm #type: ignore
-from typing import Callable, List, Literal, NoReturn, Tuple, TypedDict
-from pathlib import Path
-from smatter.media_out import save_srt
-import time
 import argparse
-import re
-import loguru
+from pathlib import Path
+import string
 import os
-import multiprocessing as mp
-import smatter.utils as u
-import smatter.transx as tx
-import smatter.ff_process as ff
-import smatter.webrtc as wrtc
-from smatter.mpv_show import show_mpv_transx_window
+import sys
+from typing import List, Optional
 
-def main():
-  parser = argparse.ArgumentParser()
-  parser.add_argument("--source", help="URL of stream/video", type=str, required=True)
-  parser.add_argument("--quality", help="Max vertical video size (e.g 480 for 480p)", type=str, default="best")
-  parser.add_argument("--start", help="Start point of a vod in HH:mm:ss", type=hms_check, default="0")
-  parser.add_argument("--output", help="What output format is desired (file or video window)", type=str, choices=['srt', 'vtt', 'watch', 'stream'], required=True)
-  parser.add_argument("--output-dir", help="Directory to store output files", default="./output", type=str, required=False)
-  parser.add_argument("--output-file", help="Filename for any output file", default="output.srt", type=str, required=False)
-  parser.add_argument("--model-size", help="Whisper model selection", type=str, default="base", required=False,
-                      choices=["tiny", "base", "small", "medium", "large", "large-v2", "tiny.en", "base.en", "small.en", "medium.en"])
-  parser.add_argument("--force-gpu", help="Force using GPU for translation (requires CUDA libraries). Only necessary if you think it isn't already happening for some reason.", action='store_true')
-  parser.add_argument("--source-language", help="Source language short code", type=str, default="en", required=False)
-  parser.add_argument("--goal", help="x in trans(x)", type=str, choices=['translate', 'transcribe'], default='transcribe', required=False)
-  parser.add_argument("--log-level", help="How much log info to show in command window", type=str, choices=['debug', 'info', 'warning', 'error', 'critical', 'none'], default='warning', required=False)
-  args = Args()
-  parser.parse_args(None, args)
-  #Prep external tools:
-  basepath = os.path.dirname(os.path.abspath(__file__))
-  binspath = os.path.join(basepath, 'libs/bin')
-  os.environ['PATH'] = binspath + os.pathsep + os.pathsep + os.environ['PATH']
+import loguru
+from loguru import logger
 
-  #Kick off work
-  log_level = args.log_level.upper()
-  u.setup_logger(log_level)
-  _logger = u.get_logger()
-  def log_or_print(msg: str, **kwargs):
-    if log_level == 'NONE':
-      print(msg.format(**kwargs))
-    _logger.warning(msg, **kwargs)
+from smatter.transx import InteractiveTransXProcess, WhisperConfig
+from smatter.smatter_socket import run_server
 
-  # Stop signal
-  stopper = mp.Event()
-  # For SRT output from Transx
-  transx_output_queue = mp.Queue()
-  passthrough_queue = mp.Queue()
-  pcm_queue = mp.Queue()
-  transx_process = None
-  ff_process = None
-  ytdl_process = None
-  output_dir = Path(args.output_dir)
-  stream_output_dir = output_dir / 'stream'
-  file_structs = re.match(r'^(.*)\.(.*)$', args.output_file)
+ROOT = os.path.dirname(__file__)
 
-  transx_config: tx.TransXConfig = {
-    '_logger': _logger,
-    'base_path': './tmp',
-    'format': 'tuple' if args.output == 'watch' or args.output == 'stream' else args.output,
-    'output_queue': transx_output_queue,
-    'requested_start': args.start,
-    'stop': stopper,
-    'stream_url': args.source,
-  }
-  whisper_config: tx.WhisperConfig = {
-    'model_size': args.model_size,
-    'force_gpu': args.force_gpu,
-    'lang': args.source_language,
-    'goal': args.goal,
-  }
-  
-  # We have to save some output files
-  if args.output in ['srt', 'save', 'mux', 'stream']:
-    _logger.debug('Checking output files and folders')
-    # Check a few prereqs
-    if not output_dir.exists():
-      output_dir.mkdir()
-    if 'stream' in args.output:
-      if not (stream_output_dir).exists():
-        stream_output_dir.mkdir()
-    if file_structs == None:
-      log_or_print('Filename must have extension (e.g. ".mkv")')
-      return
-    if ('save' in args.output and (output_dir / file_structs.group(0)).exists()) or \
-      ('srt' in args.output and (output_dir / (file_structs.group(1) + '.srt')).exists()) or \
-      ('mux' in args.output and (output_dir / ('subbed_' + file_structs.group(0))).exists()):
-      log_or_print('Output directory must be cleared of previous files, or the output filename should be adjusted.')
-      return
-  if args.output == 'watch':
-    #
-    # Watch Process:
-    #
-    # Set up watch processes
-    subs = live_bar_update_fun(tqdm(desc='Subtitles Available', total=25, unit='subtitle', ), transx_output_queue.qsize)
-    pcm = reverse_live_bar_update_fun(tqdm(desc='PCM Data', total=100, unit='chunk', ), pcm_queue.qsize)
-    passthrough = live_bar_update_fun(tqdm(desc='Video Data', total=100, unit='chunk', ), passthrough_queue.qsize)
-    try:
-      probed = ff.probe(_logger, args.source)
-      thumb_url = probed['thumbnail']
-      name = probed['title']
-      ytdl_process, _ytdl_log_thread = ff.url_into_pipe(
-        stopper, 
-        _logger if args.log_level == 'debug' else None, 
-        './tmp', 
-        args.source, 
-        args.start, 
-        args.quality
-      )
-      ff_process, _feed_thread, _pcm_feed_thread, _ff_log_thread = ff.pipe_into_mp_queue(
-        stopper, 
-        _logger, 
-        args.log_level == 'debug', 
-        ytdl_process, 
-        pcm_queue, 
-        passthrough_queue
-      )
-      tx_piped_args: Tuple[tx.TransXConfig, tx.WhisperConfig, mp.Queue] = (transx_config, whisper_config, pcm_queue)
-      transx_process = mp.Process(target=tx.transx_from_queue, args=tx_piped_args)
-      transx_process.start()
-      log_or_print('Close MPV window to end the program')
-      ufun = update_all_bars([subs, pcm, passthrough])
-      show_mpv_transx_window(stopper, _logger, transx_output_queue, passthrough_queue, thumb_url, name, ufun)
-    except Exception as e:
-      _logger.exception(e)
-    finally:
-      stopper.set()
-      _logger.info('Cleaning up')
-      subs[1].clear()
-      subs[1].close()
-      pcm[1].clear()
-      pcm[1].close()
-      passthrough[1].clear()
-      passthrough[1].close()
-      time.sleep(0.5)
-      if transx_process and transx_process.is_alive():
-        transx_process.terminate()
-      if ytdl_process and not ytdl_process.returncode:
-        ytdl_process.terminate()
-      if ff_process and not ff_process.returncode:
-        ff_process.terminate()
+def fix_elapsed(record: loguru.Record):
+  """
+  Fixes the elapsed value in log messages to display appropriately
+  """
+  record["extra"]["elapsed"] = str(record["elapsed"])
 
-      _logger.info('All done')
-  elif args.output == 'srt' or args.output == 'vtt':
-    #
-    # SRT (Save file) Thread:
-    #
-    # Set up SRT process
-    try:
-      _logger.debug('Creating save_srt task')
-      start_point = args.start
-      tx_out_args: Tuple[tx.TransXConfig, tx.WhisperConfig, None] = (transx_config, whisper_config, None)
-      transx_process = mp.Process(target=tx.transx_from_audio_stream, args=tx_out_args)
-      transx_process.start()
-      save_srt(_logger, transx_output_queue, output_dir, args.output_file)
-    except Exception as e:
-      _logger.exception(e)
-    finally:
-      _logger.info('Cleaning up')
-      stopper.set()
-      time.sleep(0.5)
-      if transx_process and transx_process.is_alive():
-        transx_process.terminate()
-      _logger.info('All done')
-  if args.output == 'stream':
-    #
-    # Stream Process
-    #
-    rtc_app = None
-    try:
-      probed = ff.probe(_logger, args.source)
-      thumb_url = probed['thumbnail']
-      name = probed['title']
-      ytdl_process, _ytdl_log_thread = ff.url_into_pipe(
-        stopper, 
-        _logger if args.log_level == 'debug' else None, 
-        './tmp', 
-        args.source, 
-        args.start, 
-        args.quality
-      )
-      ff_process, _feed_thread, _pcm_feed_thread, _ff_log_thread = ff.pipe_into_mp_queue(
-        stopper, 
-        _logger, 
-        args.log_level == 'debug', 
-        ytdl_process, 
-        pcm_queue, 
-        passthrough_queue
-      )
-      tx_piped_args: Tuple[tx.TransXConfig, tx.WhisperConfig, mp.Queue] = (transx_config, whisper_config, pcm_queue)
-      transx_process = mp.Process(target=tx.transx_from_queue, args=tx_piped_args)
-      transx_process.start()
-      log_or_print('Waiting for media to appear on translation queue')
-      while transx_output_queue.qsize() == 0:
-        time.sleep(0.5)
-      rtc_app = wrtc.web_rtc_server(
-        stopper,
-        _logger,
-        passthrough_queue,
-        transx_output_queue,
-        Path('./www'),
-        'localhost',
-        9999
-      )
-      log_or_print('Server is runing on port 9999')
-      while True:
-        time.sleep(1)
-    except Exception as e:
-      _logger.exception(e)
-    finally:
-      stopper.set()
-      _logger.info('Cleaning up')
-      if rtc_app:
-        _rtc_shutdown_result = rtc_app.shutdown()
-      time.sleep(0.5)
-      if transx_process and transx_process.is_alive():
-        transx_process.terminate()
-      if ytdl_process and not ytdl_process.returncode:
-        ytdl_process.terminate()
-      if ff_process and not ff_process.returncode:
-        ff_process.terminate()
-
-      _logger.info('All done')
-  else:
-    log_or_print('Not currently implemented')
-
-class Args(argparse.Namespace):
-  source: str
-  quality: str
-  start: str
-  output: Literal['srt', 'vtt', 'watch', 'stream']
-  output_dir: str
-  output_file: str
-  model_size: str
-  force_gpu: bool
-  source_language: str
-  goal: Literal['translate', 'transcribe']
-  log_level: Literal['debug', 'info', 'warning', 'error', 'critical', 'none']
-
-def hms_check(s: str):
-  if u.hms_match(s):
-    return s
-  else:
-    raise argparse.ArgumentTypeError(f"--start {s} invalid. Must be HH:mm:ss")
-
-def reverse_live_bar_update_fun(pb: tqdm[NoReturn], val: Callable[[], int]):
-  def update():
-    try:
-      new_val = val()
-      if pb.n < new_val:
-        if new_val > 1000:
-          pb.colour = 'red' if new_val > 10000 else 'yellow'
-      elif pb.n > new_val:
-        pb.colour = 'green'
-      if pb.total < new_val:
-        pb.total = new_val
-      pb.n = new_val
-      pb.refresh()
-      return True
-    except Exception:
-      pb.clear()
-      pb.close()
-      return False
-  return update, pb
-
-def live_bar_update_fun(pb: tqdm[NoReturn], val: Callable[[], int]):
-  def update():
-    try:
-      new_val = val()
-      if pb.n > new_val:
-        if new_val < 10:
-          pb.colour = 'red' if new_val < 3 else 'yellow'
-      elif pb.n < new_val:
-        pb.colour = 'green'
-      if pb.total < new_val:
-        pb.total = new_val
-      pb.n = new_val
-      pb.refresh()
-      return True
-    except Exception:
-      pb.clear()
-      pb.close()
-      return False
-  return update, pb
-
-def update_all_bars(bars: List[Tuple[Callable[[], bool], tqdm[NoReturn,]]]):
-
-  def update():
-    status_track: dict[Tuple[Callable[[], bool], tqdm[NoReturn,]], bool] = dict((b, True) for b in bars)
-    for b, status in status_track.items():
-      if status:
-        status_track[b] = b[0]()
-    return any(status_track.values())
-  return update
-
+logger.remove()
+logger.configure(patcher=fix_elapsed)
+logger.add(
+  sys.stderr, # type: ignore
+  format="<g>{extra[elapsed]}</g> | <level>{level: <8}</level> | <c>{process.name}</c>:<c>{thread.name}</c>:<c>{process.id}</c>:<c>{function}</c>:<c>{line}</c> - <level>{message}</level>",
+  level="INFO",
+  colorize=True,
+  enqueue=True,
+  backtrace=True,
+  diagnose=True
+)
 
 if __name__ == "__main__":
-  main()
+  parser = argparse.ArgumentParser(
+      description="Smatter TCP loopback"
+  )
+  parser.add_argument(
+      "--host", default="localhost", help="Host for TCP listener (default: localhost)"
+  )
+  parser.add_argument(
+      "--port", type=int, default=9999, help="Port for TCP listener (default: 9999)"
+  )
+  parser.add_argument(
+    "-m", "--model-size", 
+    type=str,
+    default="medium.en",
+    help="""Whisper model selection.
+            By default this is medium.en,
+            best for transcribing english.
+            Larger models may be more accurate,
+            but may also be too slow for some 
+            systems, or require too much 
+            RAM or GPU VRAM.""",
+    choices=[
+      "tiny",
+      "base",
+      "small",
+      "medium",
+      "large",
+      "large-v2",
+      "tiny.en",
+      "base.en",
+      "small.en",
+      "medium.en"
+    ]
+  )
+  parser.add_argument("-g", "--force-gpu",
+    help="""Force using GPU for translation
+            (requires CUDA libraries). Only
+            necessary if you think it isn't
+            already happening for some reason.""",
+    action='store_true'
+  )
+  parser.add_argument("-c", "--cache-dir",
+    help="""Cache for models and other data,
+            this directory may grow quite large
+            with model data if you use multiple
+            model sizes. Even the default
+            'large-v2' model is multiple GB in
+            size. Default is './cache'""",
+    default="./cache",
+    type=str
+  )
+  parser.add_argument("-l", "--source-language",
+    type=str,
+    default="en",
+    help="""Source language short code (e.g. 'en' = English,
+         'ja' = Japanese, 'de' = German). Default is 'en'.
+         See ISO_639-1 for a complete list, however the
+         Whisper model may not support all languages."""
+  )
+  parser.add_argument("goal",
+    type=str,
+    choices=[
+      'translate',
+      'transcribe'
+    ],
+    help="""Do you want to transcribe the source language,
+         or translate it into English (can only translate
+         into English currently, but transcription is 
+         available for multiple languages)"""
+  )
+  args = parser.parse_args()
+
+  transx: Optional[InteractiveTransXProcess] = None
+
+  try:
+    # Read default gigo if available
+    gigo_file = Path('./gigo_phrases.txt')
+    gigo_phrases: List[str] = []
+    if gigo_file.exists():
+      logger.info('Loading gigo phrases from gigo.txt')
+      with gigo_file.open('r', encoding='UTF-8', ) as gigo:
+        gigo_phrases = gigo.readlines()
+    gigo_phrases = [
+      phrase.strip()
+            .translate(str.maketrans('', '', string.punctuation))
+            .casefold()
+      for phrase in gigo_phrases
+    ]
+    logger.info('gigo phrases: {gigo}', gigo=gigo_phrases)
+
+    default_lang = 'en'
+    default_goal = 'transcribe'
+    if hasattr(args, 'source_language'):
+      default_lang = args.source_language
+    if hasattr(args, 'goal'):
+      default_goal = args.goal
+
+    whisper_config = WhisperConfig(
+      model = 'faster_whisper',
+      model_size = args.model_size,
+      force_gpu = args.force_gpu,
+      lang = default_lang,
+      goal = default_goal,
+      model_root = args.cache_dir,
+      gigo_phrases=gigo_phrases
+    )
+
+    # Confirm model is ready before startup, to save headaches later.
+    transx = InteractiveTransXProcess(
+      logger,
+      whisper_config
+    )
+    transx.check_model()
+
+    transx.start(
+      '0',
+      default_lang,
+      default_goal
+    )
+
+    run_server(
+      transx.input_queue,
+      transx.output_queue,
+      args.host,
+      args.port,
+      logger
+    )
+  except KeyboardInterrupt:
+    logger.info("Keyboard interrupt, exiting.")
+    if transx is not None:
+      transx.stop()
+  except Exception as e:
+    logger.exception("Unexpected error caught in main.")
+    if transx is not None:
+      transx.stop()
+
+  logger.info("Smatter exiting.")
