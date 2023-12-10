@@ -3,16 +3,18 @@
 from __future__ import annotations
 import argparse
 from pathlib import Path
+import queue
 import string
 import os
 import sys
+import threading
 from typing import List, Optional
 
 import loguru
 from loguru import logger
 
-from smatter.transx import InteractiveTransXProcess, WhisperConfig
-from smatter.smatter_socket import run_server
+from smatter.transx import InteractiveTransXProcess, TransXConfig, WhisperConfig, transx_from_socket_server
+from smatter.smatter_socket import run_proccess_server
 
 ROOT = os.path.dirname(__file__)
 
@@ -39,10 +41,10 @@ if __name__ == "__main__":
       description="Smatter TCP loopback"
   )
   parser.add_argument(
-      "--host", default="localhost", help="Host for TCP listener (default: localhost)"
+      "-a", "--host", default="localhost", help="Host for TCP listener (default: localhost)"
   )
   parser.add_argument(
-      "--port", type=int, default=9999, help="Port for TCP listener (default: 9999)"
+      "-p", "--port", type=int, default=9999, help="Port for TCP listener (default: 9999)"
   )
   parser.add_argument(
     "-m", "--model-size", 
@@ -104,6 +106,12 @@ if __name__ == "__main__":
          into English currently, but transcription is 
          available for multiple languages)"""
   )
+  parser.add_argument("-s", "--use-process",
+    help="""Use a separate process for translation.
+            Default is false, but can be enabled if
+            single-core processing isn't fast enough.""",
+    action='store_true'
+  )
   args = parser.parse_args()
 
   transx: Optional[InteractiveTransXProcess] = None
@@ -141,26 +149,48 @@ if __name__ == "__main__":
       gigo_phrases=gigo_phrases
     )
 
-    # Confirm model is ready before startup, to save headaches later.
-    transx = InteractiveTransXProcess(
-      logger,
-      whisper_config
-    )
-    transx.check_model()
+    if args.use_process:
+      logger.info('Using separate process for translation.')
+      transx = InteractiveTransXProcess(
+        logger,
+        whisper_config
+      )
+      transx.check_model()
+      transx.start(
+        '0',
+        default_lang,
+        default_goal
+      )
 
-    transx.start(
-      '0',
-      default_lang,
-      default_goal
-    )
+      run_proccess_server(
+        transx.input_queue,
+        transx.output_queue,
+        args.host,
+        args.port,
+        logger
+      )
+    else:
+      logger.info('Using threads for translation.')
 
-    run_server(
-      transx.input_queue,
-      transx.output_queue,
-      args.host,
-      args.port,
-      logger
-    )
+      transx_config = TransXConfig(
+        _logger = logger,
+        stop = threading.Event(),
+        output_queue= queue.Queue(),
+        model_config=whisper_config,
+        format='plain',
+        requested_start='0',
+        base_path='',
+        stream_url='',
+      )
+
+      transx_from_socket_server(
+        transx_config,
+        default_lang,
+        default_goal,
+        args.host,
+        args.port
+      )
+
   except KeyboardInterrupt:
     logger.info("Keyboard interrupt, exiting.")
     if transx is not None:

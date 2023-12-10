@@ -9,8 +9,9 @@ import re
 import string
 import abc
 import multiprocessing as mp
-from multiprocessing.synchronize import Event
-from typing import Callable, Generator, Literal, TypedDict, Tuple, List, Dict, Any, Optional
+import multiprocessing.synchronize as mps
+import threading as th
+from typing import Callable, Generator, Literal, TypedDict, Tuple, List, Dict, Any, Optional, Union
 from datetime import datetime, timedelta
 import numpy as np
 import numpy.typing as npt
@@ -18,16 +19,20 @@ from faster_whisper import WhisperModel, download_model
 from faster_whisper.transcribe import Segment
 import loguru
 from loguru import logger
-from libs.vad.utils_vad import VADIterator
+from libs.vad.utils_vad import VADIterator, get_vad_model
 import smatter.utils as u
+import smatter.smatter_socket as ss
+
+UEvent = Union[mps.Event, th.Event]
+UQueue = Union[mp.Queue, queue.Queue]
 
 class TransXConfig(TypedDict):
   """
   Configuration for the TransX
   process
   """
-  stop: Event
-  output_queue: mp.Queue
+  stop: UEvent
+  output_queue: UQueue
   _logger: loguru.Logger
   base_path: str
   stream_url: str
@@ -438,7 +443,7 @@ def txdata_to_srt(transx: TransXData, num: int, vtt = False):
   return f'{num}\n{start} --> {end}\n{transx_to_string(transx)}\n\n'
 
 def chunk_from_samples(
-    _stop: Event,
+    _stop: UEvent,
     r_fun: Callable[[int], bytes | None],
     length: int
   ) -> Generator[npt.NDArray[np.float32], None, None]:
@@ -450,7 +455,7 @@ def chunk_from_samples(
 
   #Prime the generator
   _buffer = r_fun(length)
-  def gen(stop: Event, buffer: bytes | None):
+  def gen(stop: UEvent, buffer: bytes | None):
     chunk = np.zeros(length, np.float32)
     chunk_watermark = 0
     while not stop.is_set() and buffer:
@@ -488,7 +493,7 @@ def vad_samples(
   chunk_size: int,
   max_size: int,
   start: int,
-  blanks: mp.Queue | None
+  blanks: UQueue | None
   ) -> Generator[Tuple[int, np.ndarray[Any, np.dtype[np.float32]]], None, None]:
   """
     Skip samples until VAD activates, then cache them
@@ -577,9 +582,66 @@ def verify_and_prepare_models(_logger: loguru.Logger, config: TypedDict, downloa
   model = config_to_model(_logger, config)
   model.prepare_dependencies(download)
 
+def transx_from_socket_server(
+    transx_config: TransXConfig,
+    language: Optional[str],
+    goal: Optional[Literal['transcribe', 'translate']],
+    host: str,
+    port: int,
+    ) -> None:
+  """
+  Generate translations from a TCP socket stream
+  of PCM data, returning translations back to the
+  client.
+  """
+  _logger = transx_config['_logger']
+  input_queue = queue.Queue()
+
+  _logger.info('Pre-preparing transx model')
+  #Pre-prepare models for use
+  verify_and_prepare_models(
+    _logger,
+    transx_config['model_config'],
+    True
+  )
+  _logger.info('Pre-preparing VAD model')
+  get_vad_model()
+  _logger.info('Pre-prep complete')
+
+  def on_start():
+    transx_config['stop'].clear()
+    transx_thread = th.Thread(
+      name='transx_from_queue',
+      target=transx_from_queue,
+      args=(transx_config, input_queue, language, goal),
+      daemon=True
+    )
+    _logger.info('Starting transx thread for new connection')
+    transx_thread.start()
+    return {
+      'transx_thread': transx_thread
+    }
+
+  def on_stop(state: Dict[str, Any]):
+    transx_config['stop'].set()
+    if 'transx_thread' in state:
+      _logger.info('Stopping transx thread for complete connection')
+      state['transx_thread'].join()
+      state.clear()
+
+  ss.run_server(
+    input_queue,
+    transx_config['output_queue'],
+    host,
+    port,
+    _logger,
+    on_start,
+    on_stop
+  )
+
 def transx_from_queue(
     transx_config: TransXConfig,
-    input_queue: mp.Queue,
+    input_queue: UQueue,
     language: Optional[str],
     goal: Optional[Literal['transcribe', 'translate']]
     ):

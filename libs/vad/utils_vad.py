@@ -1,3 +1,4 @@
+import functools
 import torch, os, onnxruntime
 import numpy as np
 
@@ -84,7 +85,8 @@ class OnnxWrapper():
 
         stacked = torch.cat(outs, dim=1)
         return stacked.cpu()
-    
+
+@functools.lru_cache
 def get_vad_model():
     this_path = os.path.join(os.path.dirname(os.path.abspath(__file__)))
     path = os.path.join(this_path, "silero_vad.onnx")
