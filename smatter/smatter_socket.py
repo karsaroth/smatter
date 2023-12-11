@@ -200,11 +200,11 @@ class SmatterRequestHandler(BaseRequestHandler):
         if closed.is_set() or result is None:
           break
         start, end, tx = result
-        _socket.sendall(json.dumps({
+        _socket.sendall((json.dumps({
           "start": start,
           "end": end,
           "tx": tx
-        }).encode())
+        }) + "\n").encode())
     except ConnectionAbortedError:
       pass
     except OSError:

@@ -163,3 +163,4 @@ cython_debug/
 /output/
 /libs/bin/**/*
 cache/
+smatterjs/node_modules/

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Smatter/WS Test Tool</title>
+    <script src='client.js'></script>
+  </head>
+
+  <body>
+    <div>
+      Select Start/Stop recording to interact with the translation/transciption backend via a microphone.<br/>
+      Translation/Transcription results (if anything is detected via VAD) will show up under messages.<br/><br/>
+      Note: This is a basic test tool so selecting from multiple microphones isn't available.<br/><br/><br/>
+    </div>
+    <div>
+      <button onclick='startRecordingWS()'>Start recording</button>
+      <button onclick='stopRecordingWS()'>Stop recording</button>
+      WebSocket: <span id="webSocketStatus">Not Connected</span>
+    </div>
+    <br/>
+    <div>Messages:</div>
+    <br/>
+    <div id="messages"></div>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "smatterjs",
+  "version": "1.0.0",
+  "description": "Javascript Component for Smatter, exposing a websocket server for a Smatter client to connect to.",
+  "main": "index.js",
+  "scripts": {
+    "start": "cross-env ENABLE_TEST_ENDPOINT=true node index.js | pino-pretty"
+  },
+  "author": "Karsaroth",
+  "license": "MIT",
+  "dependencies": {
+    "cross-env": "^7.0.3",
+    "express": "^4.18.2",
+    "pino": "^8.16.2",
+    "pino-pretty": "^10.2.3",
+    "ws": "^8.15.0"
+  }
+}
