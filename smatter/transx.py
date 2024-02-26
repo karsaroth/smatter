@@ -580,7 +580,7 @@ def verify_and_prepare_models(_logger: loguru.Logger, config: TypedDict, downloa
   Check if the model is downloaded and download it if not
   """
   model = config_to_model(_logger, config)
-  model.prepare_dependencies(download)
+  model.prepare_dependencies(not download)
 
 def transx_from_socket_server(
     transx_config: TransXConfig,

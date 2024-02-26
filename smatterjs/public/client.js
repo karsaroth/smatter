@@ -2,7 +2,7 @@
 // Global Variables
 const websocket_uri = 'ws://127.0.0.1:9998';
 
-    /** @type {new (contextOptions?: AudioContextOptions | undefined) => AudioContext} */
+/** @type {new (contextOptions?: AudioContextOptions | undefined) => AudioContext} */
 let AudioContext,
     /** @type {AudioContext} */
     context,
@@ -14,6 +14,10 @@ let AudioContext,
     globalStream,
     /** @type {WebSocket} */
     websocket;
+
+const audio = document.getElementById('audio-out');
+const mediaSource = new MediaSource();
+audio.src = URL.createObjectURL(mediaSource);
 
 
 //audioStream constraints
